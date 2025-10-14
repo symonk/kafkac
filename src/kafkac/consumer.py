@@ -48,6 +48,9 @@ class KafkaConsumer:
             # TODO: Handle on_assign, on_revoke, on_lost etc
             self.consumer.subscribe(topics=self.topics, on_assign=self._offset_cb)
             while not self.interrupted:
+                # TODO: make an algorithm here that knows when its missing messages
+                # and auto scale it back, when messages are returned in the (potential)
+                # batch, drop it down to near zero.
                 msg = self.consumer.poll(self.poll_interval)
                 if msg is None:
                     # Polling the broker for messages timed out without a message.
