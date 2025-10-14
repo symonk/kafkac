@@ -11,11 +11,19 @@ class KafkaConsumer:
         topics: tuple[str, ...],
         librdkafka_config: dict[str, typing.Any],
     ) -> None:
-        self.consumer = Consumer(**librdkafka_config)
+        self.consumer = None
+        self.running = True
+        self.topics = topics
+        self.librdkafka_config = librdkafka_config
 
     def start(self) -> None:
         """start signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
+        self.consumer = Consumer(self.librdkafka_config)
+        self.consumer.subscribe(topics=self.topics, on_assign=self._offset_cb)
+
+    def _offset_cb(self) -> None:
+        ...
 
     def __enter__(self) -> typing.Self:
         """__enter__ allows the KafkaConsumer instance to be used as a context
