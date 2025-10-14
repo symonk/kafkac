@@ -17,7 +17,7 @@ class KafkaConsumer:
 
     def __init__(
         self,
-        topics: tuple[str, ...],
+        topic_regexes: tuple[str, ...],
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 1.0,
         filter_funcs: tuple[typing.Callable[..., ...], ...] = (),
@@ -25,7 +25,7 @@ class KafkaConsumer:
         self.consumer = None
         self.running = True
         self.interrupted = False
-        self.topics = topics
+        self.topics_regexes = topic_regexes
         self.librdkafka_config = librdkafka_config
         self.in_retry_state = {}
         self.poll_interval = max(poll_interval, 1.0)
@@ -46,7 +46,7 @@ class KafkaConsumer:
             # TODO: What if topics do not exist etc.
             # TODO: Document topics can be regex based
             # TODO: Handle on_assign, on_revoke, on_lost etc
-            self.consumer.subscribe(topics=self.topics, on_assign=self._offset_cb)
+            self.consumer.subscribe(topics=self.topics_regexes, on_assign=self._offset_cb)
             while not self.interrupted:
                 # TODO: make an algorithm here that knows when its missing messages
                 # and auto scale it back, when messages are returned in the (potential)
