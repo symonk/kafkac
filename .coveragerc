@@ -1,0 +1,7 @@
+[run]
+source = src/kafkac
+omit =
+    tests/*
+
+[report]
+show_missing = True
