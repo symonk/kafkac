@@ -3,6 +3,7 @@
 `kafka` is a simple kafka consumer, wrapping around `confluent-kafka` that handles a lot of the edge cases
 for you.  Out of the box features will be:
 
+* Asynchronous API
 * Automatic version-aware model deserialization
 * Error handling
 * Metrics / OpenTelemetry capabilities
