@@ -16,8 +16,7 @@ It abstracts away the boilerplate of manual offset handling, shutdown coordinati
 - 🧩 Pluggable middleware for pre/post-processing
 - 🪦 Automatic dead-letter queueing for poison-pill messages
 - 🔁 Smart retries with exponential backoff
-- 🧠 Kafka metadata/context injection into handlers
-- 🧘 Graceful shutdown with rebalance-safe processing
+- 🧘 Graceful shutdown with built in rebalance handling support
 - ✨ And more...
 
 
