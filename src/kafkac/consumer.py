@@ -1,12 +1,10 @@
 import typing
-from confluent_kafka import Consumer
-from confluent_kafka import KafkaError
-from confluent_kafka import Message
-import time
-from .exception import KafkacException
+import asyncio
+from confluent_kafka.experimental.aio import AIOConsumer
+from confluent_kafka import Message, TopicPartition
 
 
-class KafkaConsumer:
+class AsyncKafkaConsumer:
     """KafkaConsumer wraps the confluent kafka consumer and offers improved
     developer experience and edge case handling automatically.
 
@@ -21,75 +19,105 @@ class KafkaConsumer:
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 1.0,
         filter_funcs: tuple[typing.Callable[..., ...], ...] = (),
+        batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
         self.consumer = None
         self.running = True
         self.interrupted = False
         self.topics_regexes = topic_regexes
-        self.librdkafka_config = librdkafka_config
+        self.librdkafka_config = self._prepare_librdkafka_config(librdkafka_config)
         self.in_retry_state = {}
         self.poll_interval = max(poll_interval, 1.0)
         self.filters = filter_funcs
+        # track `done` which signals after interruption, the finalizers are complete and it is safe
+        # to fully close out the consumer.
+        self.done = False
+        self.workers = 8  # TODO: Derive this, or make it available to users.
+        # keep track of the partitions assigned to this particular consumer
+        # within the group.  Rebalance events can be common, rebalancing
+        # is gracefully handled by the internals of the KafkaConsumer.
+        self.owned_partitions = {}
+        # a fixed timeout for processing the batch
+        self.batch_timeout = max(batch_timeout, 0)
 
-    def start(self) -> None:
+    @staticmethod
+    def _prepare_librdkafka_config(
+        user_librdkafka_config: dict[str, typing.Any],
+    ) -> dict[str, typing.Any]:
+        """
+        TODO: Implement, we should probably enforce auto commit offset off, and maybe some others.
+        :return:
+        """
+        return user_librdkafka_config
+
+    async def start(self) -> None:
         """start signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
-            self.consumer = Consumer(self.librdkafka_config)
-            # track the 'seen' partitions assigned to this particular consumer in
-            # the group.
-            seen_partitions = {}
-            # track the partitions that are currently 'blocking' where message processing
-            # is potentially failing and head of queue blocking for that particular log
-            # stream is not moving forward.
-            blocked_partitions = {}
+            self.consumer = AIOConsumer(self.librdkafka_config)
             # TODO: What if topics do not exist etc.
             # TODO: Document topics can be regex based
             # TODO: Handle on_assign, on_revoke, on_lost etc
-            self.consumer.subscribe(topics=self.topics_regexes, on_assign=self._offset_cb)
+            await self.consumer.subscribe(
+                topics=self.topics_regexes, on_assign=self._offset_cb
+            )
             while not self.interrupted:
                 # TODO: make an algorithm here that knows when its missing messages
                 # and auto scale it back, when messages are returned in the (potential)
                 # batch, drop it down to near zero.
-                msg = self.consumer.poll(self.poll_interval)
-                if msg is None:
+                messages = self.consumer.consume(self.poll_interval)
+                if not messages:
                     # Polling the broker for messages timed out without a message.
                     # The topic is possibly low traffic, or the producer may be
-                    # slow or having an issue.
+                    # slow or having an issue.  No need to sleep here to avoid a hot
+                    # CPU loop, the consume call will delay this particular task.
                     continue
-                if (err := msg.error()) is not None:
-                    if err.code() == KafkaError._PARTITION_EOF:
-                        # the consumer assigned the partition is at the end of
-                        # that particular partitions log.
-                        continue
-                    # TODO: Allow this to be configurable, don't just raise and kill
-                    # the underlying consumer.
-                    raise KafkacException(err.message())
-                else:
-                    # We have retrieved a successful message from the cluster
-                    try:
-                        self._process_message(msg)
-                        self.consumer.commit(msg, asynchronous=True)
-                    except KafkacException:
-                        # TODO: Handle offset seeking etc.
-                        ...
+
+                # There are some messages to process, we can discard any messages that
+                # do not adhere to the user supplied filter func coroutine.  Fan out
+                # the message batch to that function to collect a grouping of messages
+                # that actually apply, anything removed here should be automatically
+                # move the offset forward on those particular partitions.
+                filtered_messages = await self._filter_messages(messages)
+
+                # we have filtered messages, group the messages by partition.  They are
+                # passed to a worker pool by partition.  This allows asynchronous processing
+                # of messages, but guaranteeing any failures for a particular partition within
+                # the batch, that they are abandoned and the offset is not moved forward.
+                # DLQ capabilities are supported to auto-detect poisonous messages that would
+                # cause head of queue blocking and move them off to the side.
+                # TODO: This is suboptimal, we are already filtering and iterating, we should provide
+                # TODO: This as the output of that, consider for later.
+                partitions_map = {}
+
+                # for each of the partitions this consumed is assigned, fan out the partitions messages
+                # as one transactional unit of work.  Should any message fail throughout processing the
+                # entire batch is abandoned and the partition will be considered blocked, not stored and
+                # will try again on the next consume loop.
+                results: list[TopicPartition] = []
+                for partition, messages in filtered_messages.items():
+                    results[partition] = await self._process_message(messages)
+
+                # We have the results from the worker pool on a per partition basis
+                # for cases where all messages in a partition were successful, move
+                # the offset forward
+                # TODO: Understand asynchronous commit here properly.
+                await self.consumer.commit(
+                    message=None, offsets=results, asynchronous=True
+                )
+
         except KeyboardInterrupt:
             self.interrupted = True
             while not self.done:
-                time.sleep(1)
-            # successfully gracefully shutdown and committed appropriate
-            # offsets etc.
+                await asyncio.sleep(1)
         finally:
             # leave group and commit final offsets.
-            self.consumer.close()
+            await self.consumer.close()
+            await self.consumer.unsubscribe()
 
-    def _process_message(self, message: Message) -> None:
-        if not self._handle_filters(message):
-            return
-        # No user defined filtering was applied to the message, we should
-        # attempt to process it inline with other configurations of the
-        # consumer, such as custom deserialisation etc.
-        ...
+    async def _filter_messages(self, messages: list[Message]) -> list[Message]: ...
+
+    async def _process_message(self, messages: list[Message]) -> None: ...
 
     def _offset_cb(self) -> None: ...
 
