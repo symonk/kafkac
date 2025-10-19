@@ -1,9 +1,13 @@
 import asyncio
+import logging
 import typing
 
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 class AsyncKafkaConsumer:
@@ -95,6 +99,7 @@ class AsyncKafkaConsumer:
                 # the message batch to that function to collect a grouping of messages
                 # that actually apply, anything removed here should be automatically
                 # move the offset forward on those particular partitions.
+                # TODO: Make sure to handle actual message.error() cases here internally.
                 filtered_messages = await self._handle_filters(messages)
 
                 # we have filtered messages, group the messages by partition.  They are
@@ -113,15 +118,22 @@ class AsyncKafkaConsumer:
                 # entire batch is abandoned and the partition will be considered blocked, not stored and
                 # will try again on the next consume loop.
                 results: list[TopicPartition] = []
-                await self._process_message(filtered_messages)
+                messages = await self._process_message(filtered_messages)
+                for message in messages:
+                    results.append(message.partition)
 
                 # We have the results from the worker pool on a per partition basis
                 # for cases where all messages in a partition were successful, move
                 # the offset forward
                 # TODO: Understand asynchronous commit here properly.
-                await self.consumer.commit(
-                    offsets=results, asynchronous=True
+                # TODO: Figure out the logic above, this is committing garbage atm.
+                commit_results = await self.consumer.commit(
+                    offsets=results, asynchronous=False
                 )
+
+                # TODO: In a batch, some of the subset could of failed to commit, we need
+                # to handle that.  check if error is set essentially.
+                _ = commit_results
 
         except KeyboardInterrupt:
 
@@ -134,10 +146,11 @@ class AsyncKafkaConsumer:
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
 
-    async def _process_message(self, messages: list[Message]) -> None:
+    async def _process_message(self, messages: list[Message]) -> list[Message]:
         """TODO: This will invoke client defined callables later."""
         for message in messages:
             print(message.value())
+        return messages
 
     async def _on_assign(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
         self.assigned_partitions = set(topic.partition for topic in partitions)
@@ -179,3 +192,13 @@ class AsyncKafkaConsumer:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self.consumer.close()
         return None
+
+
+async def stats_cb() -> None:
+    ...
+
+async def throttle_cb() -> None:
+    ...
+
+async def error_cb() -> None:
+    ...
