@@ -21,3 +21,11 @@ It abstracts away the boilerplate of manual offset handling, shutdown coordinati
 
 
 ---
+
+### 🧠 Quick Start
+
+```python
+# TODO!
+```
+
+---
