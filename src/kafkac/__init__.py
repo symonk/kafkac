@@ -1,2 +1,3 @@
-def hello() -> str:
-    return "Hello from kafkac!"
+from .consumer import AsyncKafkaConsumer
+
+__all__ = ("AsyncKafkaConsumer",)

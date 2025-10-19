@@ -20,6 +20,7 @@ build-backend = "uv_build"
 dev = [
     "pre-commit>=4.3.0",
     "pytest>=8.4.2",
+    "pytest-asyncio>=1.2.0",
     "pytest-xdist>=3.8.0",
     "testcontainers>=4.13.2",
 ]
