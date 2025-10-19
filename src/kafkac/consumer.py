@@ -25,7 +25,7 @@ class AsyncKafkaConsumer:
         topic_regexes: list[str],
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
-        filter_funcs: tuple[typing.Callable[..., ...], ...] = (),
+        filter_func: typing.Coroutine | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
         if "group.id" not in librdkafka_config:
@@ -37,7 +37,7 @@ class AsyncKafkaConsumer:
         self.librdkafka_config = self._prepare_librdkafka_config(librdkafka_config)
         self.in_retry_state = {}
         self.poll_interval = max(0.1, poll_interval)
-        self.filters = filter_funcs
+        self.filter_func = filter_func
         # track `done` which signals after interruption, the finalizers are complete and it is safe
         # to fully close out the consumer.
         self.done = False
