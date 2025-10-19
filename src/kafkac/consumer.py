@@ -21,8 +21,10 @@ class AsyncKafkaConsumer:
         filter_funcs: tuple[typing.Callable[..., ...], ...] = (),
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
+        if "group.id" not in librdkafka_config:
+            raise ValueError("consumer must be assigned a `group.id` in the librdkafka config")
         self.consumer = None
-        self.running = True
+        self.running = False
         self.interrupted = False
         self.topics_regexes = topic_regexes
         self.librdkafka_config = self._prepare_librdkafka_config(librdkafka_config)
@@ -36,7 +38,7 @@ class AsyncKafkaConsumer:
         # keep track of the partitions assigned to this particular consumer
         # within the group.  Rebalance events can be common, rebalancing
         # is gracefully handled by the internals of the KafkaConsumer.
-        self.owned_partitions = {}
+        self.assigned_partitions = {}
         # a fixed timeout for processing the batch
         self.batch_timeout = max(batch_timeout, 0)
 
@@ -54,13 +56,14 @@ class AsyncKafkaConsumer:
         """start signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
-            self.consumer = AIOConsumer(self.librdkafka_config)
+            self.consumer = AIOConsumer(self.librdkafka_config, max_workers=self.workers)
             # TODO: What if topics do not exist etc.
             # TODO: Document topics can be regex based
             # TODO: Handle on_assign, on_revoke, on_lost etc
             await self.consumer.subscribe(
                 topics=self.topics_regexes, on_assign=self._offset_cb
             )
+            self.running = True
             while not self.interrupted:
                 # TODO: make an algorithm here that knows when its missing messages
                 # and auto scale it back, when messages are returned in the (potential)
@@ -107,13 +110,15 @@ class AsyncKafkaConsumer:
                 )
 
         except KeyboardInterrupt:
+
             self.interrupted = True
             while not self.done:
                 await asyncio.sleep(1)
         finally:
-            # leave group and commit final offsets.
-            await self.consumer.close()
-            await self.consumer.unsubscribe()
+            if self.running:
+                # leave group and commit final offsets.
+                await self.consumer.unsubscribe()
+                await self.consumer.close()
 
     async def _filter_messages(self, messages: list[Message]) -> list[Message]: ...
 
@@ -132,6 +137,11 @@ class AsyncKafkaConsumer:
         considered for processing.  If False, the process loop will discard the
         message but move the offset for that particular partition forward.
         """
+
+    def stop(self) -> None:
+        """stop signals that the consumer should begin a graceful shutdown.
+        This will still allow in flight batches to be processed."""
+        self.interrupted = True
 
     def __enter__(self) -> typing.Self:
         """__enter__ allows the KafkaConsumer instance to be used as a context

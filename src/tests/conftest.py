@@ -33,7 +33,7 @@ def test_kafka(request: pytest.FixtureRequest) -> typing.Generator[tuple[dict[st
 
 
 @pytest.fixture(scope="function")
-def callable_producer() -> typing.Callable[[dict[str, typing.Any], str, int], None]:
+def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], None]:
     def simple_producer(bootstrap_config: dict[str, typing.Any], topic: str, count: int = 120) -> None:
         """simple_producer is a fixture that creates dummy data into kafka
         for testing the AsyncKafkaConsumer downstream."""
