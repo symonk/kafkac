@@ -1,7 +1,9 @@
-import typing
 import asyncio
+import typing
+
+from confluent_kafka import Message
+from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
-from confluent_kafka import Message, TopicPartition
 
 
 class AsyncKafkaConsumer:
@@ -11,6 +13,7 @@ class AsyncKafkaConsumer:
     # TODO: Testing
     # TODO: Signal handling and graceful shutdown
     # TODO: Document 'common' librdkafka settings (auto commit, acks etc)
+    # TODO: Wire in stats callbacks
     """
 
     def __init__(

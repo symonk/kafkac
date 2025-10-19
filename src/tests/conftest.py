@@ -1,10 +1,11 @@
 import time
-from testcontainers.kafka import KafkaContainer
-from confluent_kafka.admin import AdminClient, NewTopic
-from confluent_kafka import Producer
 import typing
-import pytest
 
+import pytest
+from confluent_kafka import Producer
+from confluent_kafka.admin import AdminClient
+from confluent_kafka.admin import NewTopic
+from testcontainers.kafka import KafkaContainer
 
 DEFAULT_PARTITIONS = (
     40

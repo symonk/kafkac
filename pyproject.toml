@@ -24,3 +24,21 @@ dev = [
     "pytest-xdist>=3.8.0",
     "testcontainers>=4.13.2",
 ]
+
+[tool.ruff.lint]
+ignore = ["B008"]
+extend-select = ["B", "I"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.mypy]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:testcontainers"
+]
+
+[scripts]
+cover = "pytest --cov=src/kafkac --cov-report=term-missing"

@@ -1,7 +1,10 @@
 import asyncio
-import pytest
 import uuid
+
+import pytest
+
 from kafkac import AsyncKafkaConsumer
+
 
 @pytest.mark.asyncio
 async def test_simple_container(test_kafka, message_producer) -> None:
