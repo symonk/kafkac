@@ -5,6 +5,7 @@ import typing
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
+from .handler import HandlerFunc
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -17,11 +18,11 @@ class AsyncKafkaConsumer:
     # TODO: Testing
     # TODO: Signal handling and graceful shutdown
     # TODO: Document 'common' librdkafka settings (auto commit, acks etc)
-    # TODO: Wire in stats callbacks
     """
 
     def __init__(
         self,
+        handler_func: HandlerFunc,
         topic_regexes: list[str],
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
@@ -65,6 +66,7 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["enable.partition.eof"] = False
         user_librdkafka_config["enable.auto.commit"] = False
         user_librdkafka_config["enable.auto.offset.store"] = False
+        user_librdkafka_config["stats_cb"] = stats_cb
         return user_librdkafka_config
 
     async def start(self) -> None:
@@ -152,6 +154,7 @@ class AsyncKafkaConsumer:
             print(message.value())
         return messages
 
+    # TODO: on_assign & on_revoke need to use incremental assign.
     async def _on_assign(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
         self.assigned_partitions = set(topic.partition for topic in partitions)
 
