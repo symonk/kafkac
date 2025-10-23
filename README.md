@@ -1,10 +1,14 @@
 ## 🐍 kafkac — A Structured Kafka Consumer Framework for Python
 
+**kafkac** is a minimal, opinionated framework for building reliable Kafka consumers in Python using the [confluent-kafka](https://github.com/confluentinc/confluent-kafka-python) client.
+It abstracts away the boilerplate of manual offset handling, shutdown coordination, and message deserialization - giving you a clean async interface for consuming messages safely and predictably.
+
 > [!IMPORTANT]
 > kafkac prioritises correctness and speed, in that order, avoiding message loss at all costs.
 
-**kafkac** is a minimal, opinionated framework for building reliable Kafka consumers in Python using the [confluent-kafka](https://github.com/confluentinc/confluent-kafka-python) client.
-It abstracts away the boilerplate of manual offset handling, shutdown coordination, and message deserialization - giving you a clean async interface for consuming messages safely and predictably.
+> [!CAUTION]
+> Consumers, typically should always be idempotent in their processing, 100% guarantee of absolutely zero message
+> duplication is a very complex problem to solve.
 
 ---
 
