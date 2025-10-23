@@ -1,3 +1,5 @@
 from .consumer import AsyncKafkaConsumer
+from .dlq import DLQFunc
+from .handler import HandlerFunc
 
-__all__ = ("AsyncKafkaConsumer",)
+__all__ = ("AsyncKafkaConsumer", "DLQFunc", "HandlerFunc")
