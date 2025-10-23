@@ -6,6 +6,8 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
 from .handler import HandlerFunc, BatchResult
+from .filter import FilterFunc
+from .dlq import DLQFunc
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -27,7 +29,8 @@ class AsyncKafkaConsumer:
         topic_regexes: list[str],
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
-        filter_func: typing.Coroutine | None = None,
+        filter_func: FilterFunc | None = None,
+        dlq_func: DQLFunc | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
         # group.id is a required parameter
@@ -45,6 +48,7 @@ class AsyncKafkaConsumer:
         self.in_retry_state = {}
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
+        self.dlq_func = dlq_func
         # track `done` which signals after interruption, the finalizers are complete and it is safe
         # to fully close out the consumer.
         self.done = False

@@ -1,5 +1,10 @@
 from dataclasses import dataclass
 from enum import StrEnum
+from confluent_kafka import Message
+import typing
+
+# DLQFunc defines the coroutine signature for user supplied dead letter handling
+DLQFunc = typing.Callable[[Message], typing.Awaitable[bool]]
 
 
 class OnFail(StrEnum):
