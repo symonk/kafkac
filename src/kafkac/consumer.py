@@ -1,7 +1,10 @@
 import asyncio
+import json
 import logging
 import typing
+from pprint import pformat
 
+from confluent_kafka import KafkaError
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
@@ -83,6 +86,8 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["enable.auto.commit"] = False
         user_librdkafka_config["enable.auto.offset.store"] = False
         user_librdkafka_config["stats_cb"] = stats_cb
+        # TODO: Remove later just for testing
+        user_librdkafka_config["statistics.interval.ms"] = 1000
         return user_librdkafka_config
 
     async def start(self) -> None:
@@ -283,13 +288,16 @@ class AsyncKafkaConsumer:
         return None
 
 
-async def stats_cb() -> None: ...
+async def stats_cb(json_str: str) -> None:
+    data = pformat(json.loads(json_str))
+    logger.info(f"received stats: {data}")
 
 
 async def throttle_cb() -> None: ...
 
 
-async def error_cb() -> None: ...
+async def error_cb(err: KafkaError) -> None:
+    logger.error("received transient error: %s", err)
 
 
 # TODO: Move to somewhere else later

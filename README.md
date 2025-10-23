@@ -26,6 +26,14 @@ It abstracts away the boilerplate of manual offset handling, shutdown coordinati
 - 🧘 Automatic rebalance management
 - ✨ And more...
 
+---
+
+### Benchmarks
+
+Below are some benchmarks that preload various levels of messages onto a topic, run a `kafkac` consumer to
+process those messages, writing the messages to another topic, confirming all the messages are accounted for.
+
+// TODO
 
 ---
 

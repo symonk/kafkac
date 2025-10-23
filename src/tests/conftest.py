@@ -1,3 +1,4 @@
+import logging
 import time
 import typing
 
@@ -6,6 +7,8 @@ from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.admin import NewTopic
 from testcontainers.kafka import KafkaContainer
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PARTITIONS = 40
 
@@ -43,6 +46,8 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
     ) -> None:
         """simple_producer is a fixture that creates dummy data into kafka
         for testing the AsyncKafkaConsumer downstream."""
+        start = time.monotonic()
+        logger.info(f"producing {count} messages")
 
         def delivery_callback(err, msg):
             if err:
@@ -57,5 +62,6 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
             p.produce(topic, rand, callback=delivery_callback)
             p.poll(0)
         p.flush()
+        logger.info(f"producing {count} messages in {time.monotonic() - start} seconds")
 
     return simple_producer

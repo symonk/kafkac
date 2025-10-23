@@ -15,7 +15,7 @@ async def successful_test_handler(messages: list[Message]) -> BatchResult:
 @pytest.mark.asyncio
 async def test_simple_container(test_kafka, message_producer) -> None:
     bootstrap_config, container, topic = test_kafka
-    message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=500)
+    message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
     bootstrap_config["group.id"] = "basic-test"
     consumer_config = {
         "bootstrap.servers": bootstrap_config.get("bootstrap.servers"),
