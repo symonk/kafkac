@@ -33,6 +33,7 @@ class AsyncKafkaConsumer:
         handler_func: HandlerFunc,
         batch_size: int,
         topic_regexes: list[str],
+        stop_after: int = 0,
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
         filter_func: FilterFunc | None = None,
@@ -47,6 +48,9 @@ class AsyncKafkaConsumer:
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
         # 1M messages, if higher than this the core library will raise an error on consume(...)
         self.batch_size = min(max(batch_size, 1), 1_000_000)
+        # automatic shutdown after a fixed number of messages have been processed.
+        # use with caution, in the world of duplication this can be a naive concept.
+        self.stop_after = stop_after
         self.handler_func = handler_func
         self.consumer = None
         self.running = False
@@ -87,7 +91,6 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["enable.auto.offset.store"] = False
         user_librdkafka_config["stats_cb"] = stats_cb
         # TODO: Remove later just for testing
-        user_librdkafka_config["statistics.interval.ms"] = 1000
         return user_librdkafka_config
 
     async def start(self) -> None:
