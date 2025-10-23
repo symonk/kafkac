@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Fetch and display consumer-only settings from librdkafka CONFIGURATION.md
+
+set -euo pipefail
+
+CONFIG_URL="https://raw.githubusercontent.com/confluentinc/librdkafka/master/CONFIGURATION.md"
+TMP_FILE="$(mktemp)"
+trap 'rm -f "$TMP_FILE"' EXIT
+
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RESET="\033[0m"
+
+echo -e "${YELLOW}📥 Downloading librdkafka CONFIGURATION.md...${RESET}"
+curl -fsSL "$CONFIG_URL" -o "$TMP_FILE"
+
+echo -e "${YELLOW}🔍 Extracting consumer-only settings...${RESET}"
+
+# Extract markdown table rows that have 'C' in the "Applies to" column
+# and look like valid config entries (first column = setting name)
+grep -E '^[a-zA-Z0-9._-]+\s*\|' "$TMP_FILE" \
+  | grep -E '\|\s*C\s*' \
+  | awk -F '|' '
+    BEGIN {
+      printf "%-35s | %-15s | %-15s | %s\n", "SETTING", "TYPE", "DEFAULT", "DESCRIPTION"
+      printf "%s\n", "---------------------------------------------------------------------------------------------------------------"
+    }
+    {
+      key=$1; gsub(/^[ \t]+|[ \t]+$/, "", key);
+      type=$2; gsub(/^[ \t]+|[ \t]+$/, "", type);
+      default_val=$4; gsub(/^[ \t]+|[ \t]+$/, "", default_val);
+      desc=$5; gsub(/^[ \t]+|[ \t]+$/, "", desc);
+      printf "%-35s | %-15s | %-15s | %s\n", key, type, default_val, desc;
+    }'
+
+echo -e "${GREEN}✅ Done.${RESET}"
