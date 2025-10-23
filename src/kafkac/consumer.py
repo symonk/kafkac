@@ -6,6 +6,7 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
 
+from .dlq import DLQFunc
 from .filter import FilterFunc
 from .handler import BatchResult
 from .handler import HandlerFunc
@@ -31,7 +32,7 @@ class AsyncKafkaConsumer:
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
         filter_func: FilterFunc | None = None,
-        dlq_func: DQLFunc | None = None,
+        dlq_func: DLQFunc | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
         # group.id is a required parameter
