@@ -1,6 +1,9 @@
 import typing
 from dataclasses import dataclass
-from confluent_kafka import Message, TopicPartition
+
+from confluent_kafka import Message
+from confluent_kafka import TopicPartition
+
 
 @dataclass
 class BatchResult:
@@ -20,6 +23,7 @@ class BatchResult:
     Note: The behaviour of dead_letter varies and is another point where the user can inject
     some behaviour.
     """
+
     success: list[TopicPartition]
     blocked: list[TopicPartition]
     dead_letter: list[TopicPartition]
@@ -41,6 +45,7 @@ class BatchResult:
         """all_transient implies all partitions are blocked but not in a fatal enough way
         to dead letter."""
         return not self.all_success and not self.dead_letter and self.blocked
+
 
 # HandlerFunc defines the core type that user defined handlers should implement.
 # The AsyncConsumer expects a handler func.

@@ -17,9 +17,12 @@ async def test_simple_container(test_kafka, message_producer) -> None:
         "auto.offset.reset": "earliest",
         "partition.assignment.strategy": "cooperative-sticky",
     }
-    consumer = AsyncKafkaConsumer(topic_regexes=[topic.topic], librdkafka_config=consumer_config)
+    consumer = AsyncKafkaConsumer(
+        topic_regexes=[topic.topic], librdkafka_config=consumer_config
+    )
 
     async def stopper():
         await asyncio.sleep(3)
         consumer.stop()
+
     await asyncio.gather(*(stopper(), consumer.start()))

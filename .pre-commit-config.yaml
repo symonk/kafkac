@@ -1,4 +1,20 @@
 repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+    - id: trailing-whitespace
+    - id: check-ast
+    - id: check-builtin-literals
+    - id: check-case-conflict
+    - id: check-executables-have-shebangs
+    - id: check-illegal-windows-names
+    - id: check-json
+    - id: debug-statements
+    - id: double-quote-string-fixer
+    - id: end-of-file-fixer
+    - id: name-tests-test
+    - id: pretty-format-json
+    - id: trailing-whitespace
 - repo: https://github.com/astral-sh/ruff-pre-commit
   # Ruff version.
   rev: v0.12.10

@@ -5,9 +5,10 @@ import typing
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
-from .handler import HandlerFunc, BatchResult
+
 from .filter import FilterFunc
-from .dlq import DLQFunc
+from .handler import BatchResult
+from .handler import HandlerFunc
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -35,7 +36,9 @@ class AsyncKafkaConsumer:
     ) -> None:
         # group.id is a required parameter
         if "group.id" not in librdkafka_config:
-            raise ValueError("consumer must be assigned a `group.id` in the librdkafka config")
+            raise ValueError(
+                "consumer must be assigned a `group.id` in the librdkafka config"
+            )
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
         # 1M messages, if higher than this the core library will raise an error on consume(...)
         self.batch_size = min(max(batch_size, 1), 1_000_000)
@@ -84,7 +87,9 @@ class AsyncKafkaConsumer:
         """start signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
-            self.consumer = AIOConsumer(consumer_conf=self.librdkafka_config, max_workers=self.workers)
+            self.consumer = AIOConsumer(
+                consumer_conf=self.librdkafka_config, max_workers=self.workers
+            )
             # TODO: What if topics do not exist etc.
             # TODO: Document topics can be regex based
             # TODO: Handle on_assign, on_revoke, on_lost etc
@@ -99,7 +104,9 @@ class AsyncKafkaConsumer:
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
-                messages = await self.consumer.consume(num_messages=self.batch_size, timeot=self.poll_interval)
+                messages = await self.consumer.consume(
+                    num_messages=self.batch_size, timeot=self.poll_interval
+                )
                 if not messages:
                     # Polling the broker for messages timed out without a message.
                     # The topic is possibly low traffic, or the producer may be
@@ -153,7 +160,6 @@ class AsyncKafkaConsumer:
                 # scenario.
                 raise ValueError("not implemented yet")
 
-
         except KeyboardInterrupt:
             self.interrupted = True
             while not self.done:
@@ -164,11 +170,18 @@ class AsyncKafkaConsumer:
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
 
-    async def _commit(self, message: Message | None = None, offsets: list[TopicPartition] | None = None, block: bool = True) -> bool:
+    async def _commit(
+        self,
+        message: Message | None = None,
+        offsets: list[TopicPartition] | None = None,
+        block: bool = True,
+    ) -> bool:
         """commit attempts to store the offsets
 
         TODO: Rewrite this logic, hacked for now."""
-        results = await self.consumer.commit(message=message, offsets=offsets, asynchronous=not block)
+        results = await self.consumer.commit(
+            message=message, offsets=offsets, asynchronous=not block
+        )
 
         # asynchronous commit, a background librdkafka will handle the committing at some point
         # in the future.
@@ -177,16 +190,24 @@ class AsyncKafkaConsumer:
 
         # the topic/partitions are returned that were attempted, ensure all of them were marked as a success:
         # TODO: don't swallow the errors
-        successes = [topic_partition for topic_partition in results if topic_partition.error() is None]
+        successes = [
+            topic_partition
+            for topic_partition in results
+            if topic_partition.error() is None
+        ]
         if len(successes) == len(results):
             return True
         return False
 
     # TODO: on_assign & on_revoke need to use incremental assign.
-    async def _on_assign(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
+    async def _on_assign(
+        self, _: AIOConsumer, partitions: list[TopicPartition]
+    ) -> None:
         self.assigned_partitions = set(topic.partition for topic in partitions)
 
-    async def _on_revoke(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
+    async def _on_revoke(
+        self, _: AIOConsumer, partitions: list[TopicPartition]
+    ) -> None:
         """_on_revoke is called during a rebalance when this particular consumer has
         lost some of it's previously owned partitions.  It should gracefully commit
         any offsets for these partitions to prevent message duplication etc when
@@ -194,7 +215,7 @@ class AsyncKafkaConsumer:
         await self.consumer.commit(offsets=partitions)
 
     async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
-        """on_lost is invoked when partitions are lost unexpectedly """
+        """on_lost is invoked when partitions are lost unexpectedly"""
 
     async def _handle_filters(self, messages: list[Message]) -> list[Message]:
         """_handle_filters is responsible for evaluating message headers against
@@ -211,10 +232,15 @@ class AsyncKafkaConsumer:
         for message in messages:
             if err := message.error():
                 logger.error("message error in the batch: %s", err)
-            if ok := await self.filter_func(message):
+            if await self.filter_func(message):
                 applicable.append(message)
             else:
-                logger.debug("message dropped during filtering: %s:%d:%d", message.topic, message.partition, message.offset)
+                logger.debug(
+                    "message dropped during filtering: %s:%d:%d",
+                    message.topic,
+                    message.partition,
+                    message.offset,
+                )
 
         return messages
 
@@ -234,11 +260,10 @@ class AsyncKafkaConsumer:
         return None
 
 
-async def stats_cb() -> None:
-    ...
+async def stats_cb() -> None: ...
 
-async def throttle_cb() -> None:
-    ...
 
-async def error_cb() -> None:
-    ...
+async def throttle_cb() -> None: ...
+
+
+async def error_cb() -> None: ...
