@@ -5,7 +5,7 @@ import typing
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
-from .handler import HandlerFunc
+from .handler import HandlerFunc, BatchResult
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
@@ -23,14 +23,20 @@ class AsyncKafkaConsumer:
     def __init__(
         self,
         handler_func: HandlerFunc,
+        batch_size: int,
         topic_regexes: list[str],
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
         filter_func: typing.Coroutine | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
+        # group.id is a required parameter
         if "group.id" not in librdkafka_config:
             raise ValueError("consumer must be assigned a `group.id` in the librdkafka config")
+        # ensure a positive batch size, while also keeping it below the librdkafka limit of
+        # 1M messages, if higher than this the core library will raise an error on consume(...)
+        self.batch_size = min(max(batch_size, 1), 1_000_000)
+        self.handler_func = handler_func
         self.consumer = None
         self.running = False
         self.interrupted = False
@@ -49,8 +55,9 @@ class AsyncKafkaConsumer:
         # assigned partitions are topic specific, this tracks the topic name
         # to a set of partitions this consumer is currently responsible for.
         self.assigned_partitions = dict[str, set[int]]
-        # a fixed timeout for processing the batch
-        self.batch_timeout = float(max(batch_timeout, 1.0))
+        # a fixed timeout for processing the batch, if 0 there is no timeout for
+        # the batch.
+        self.batch_timeout = float(max(batch_timeout, 0))
         # during rebalancing, it is important to prevent message processing while
         # callbacks are firing, especially true for revoking of partitions
         self.rebalance_lock = asyncio.Lock()
@@ -85,10 +92,10 @@ class AsyncKafkaConsumer:
             )
             self.running = True
             while not self.interrupted:
-                # TODO: make an algorithm here that knows when its missing messages
-                # and auto scale it back, when messages are returned in the (potential)
-                # batch, drop it down to near zero.
-                messages = await self.consumer.consume(timeout=self.poll_interval)
+                # fetch a batch of messages from the subscribed topic(s).  Using consume
+                # for batches is better for performance, as the async overhead is amortized
+                # across the entire batch of messages.
+                messages = await self.consumer.consume(num_messages=self.batch_size, timeot=self.poll_interval)
                 if not messages:
                     # Polling the broker for messages timed out without a message.
                     # The topic is possibly low traffic, or the producer may be
@@ -96,49 +103,54 @@ class AsyncKafkaConsumer:
                     # CPU loop, the consume call will delay this particular task.
                     continue
 
-                # There are some messages to process, we can discard any messages that
-                # do not adhere to the user supplied filter func coroutine.  Fan out
-                # the message batch to that function to collect a grouping of messages
-                # that actually apply, anything removed here should be automatically
-                # move the offset forward on those particular partitions.
-                # TODO: Make sure to handle actual message.error() cases here internally.
+                # for each of the messages, apply a user defined filter (if specified)
+                # otherwise do not apply filtering at all and process all messages.
+                # this is useful for cases where a kafka header may prevent a lot of deserialisation
+                # in the core process loop to save sizable on time and increase throughput.
                 filtered_messages = await self._handle_filters(messages)
-
-                # we have filtered messages, group the messages by partition.  They are
-                # passed to a worker pool by partition.  This allows asynchronous processing
-                # of messages, but guaranteeing any failures for a particular partition within
-                # the batch, that they are abandoned and the offset is not moved forward.
-                # DLQ capabilities are supported to auto-detect poisonous messages that would
-                # cause head of queue blocking and move them off to the side.
-                # TODO: This is suboptimal, we are already filtering and iterating, we should provide
-                # TODO: This as the output of that, consider for later.
-                partitions_map = {}
-                _ = partitions_map
+                if len(filtered_messages) == 0:
+                    # the entire batch was 'filtered' out by the user.
+                    # TODO: handle exceptions (RuntimeError/KafkaException)
+                    await self._commit(message=None, offsets=None, block=True)
+                    continue
 
                 # for each of the partitions this consumed is assigned, fan out the partitions messages
                 # as one transactional unit of work.  Should any message fail throughout processing the
                 # entire batch is abandoned and the partition will be considered blocked, not stored and
                 # will try again on the next consume loop.
-                results: list[TopicPartition] = []
-                messages = await self._process_message(filtered_messages)
-                for message in messages:
-                    results.append(message.partition)
+                batch_result: BatchResult = await self.handler_func(filtered_messages)
+                if not isinstance(batch_result, BatchResult):
+                    raise ValueError("handler coroutines must return a `BatchResult`")
 
-                # We have the results from the worker pool on a per partition basis
-                # for cases where all messages in a partition were successful, move
-                # the offset forward
-                # TODO: Understand asynchronous commit here properly.
-                # TODO: Figure out the logic above, this is committing garbage atm.
-                commit_results = await self.consumer.commit(
-                    offsets=results, asynchronous=False
-                )
+                # every partition is blocked in a transient way, next loop the same batch of messages
+                # will be retried, unless the batch was not full in which case a superset of this batch
+                # will be retried.
+                if batch_result.all_transient:
+                    continue
 
-                # TODO: In a batch, some of the subset could of failed to commit, we need
-                # to handle that.  check if error is set essentially.
-                _ = commit_results
+                # inspect the batch results to derive offsets to store and commit or dead letter behaviour
+                # to manage.
+                # check if the entire batch was successful and commit all
+                if batch_result.all_success:
+                    await self._commit(message=None, offsets=None, block=True)
+                    continue
+
+                # check if there was dead letter fatal failures, for now hard coded printing them
+                # dead letters are technically 'successful' and from the consumers point of view
+                # should roll the offset forward.
+                if batch_result.dead_letter:
+                    logger.info("all dead lettered!")
+                    await self._commit(message=None, offsets=None, block=True)
+
+                # the most complicated scenario, the batch had a mix of successes and failures
+                # within it.  The lowest successful offset of each partition will be moved forward
+                # to avoid message loss, anything that was successful after a failed offset prior
+                # will be retried, causing duplication.  In future kafkac will be much smarter in this
+                # scenario.
+                raise ValueError("not implemented yet")
+
 
         except KeyboardInterrupt:
-
             self.interrupted = True
             while not self.done:
                 await asyncio.sleep(1)
@@ -148,11 +160,23 @@ class AsyncKafkaConsumer:
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
 
-    async def _process_message(self, messages: list[Message]) -> list[Message]:
-        """TODO: This will invoke client defined callables later."""
-        for message in messages:
-            print(message.value())
-        return messages
+    async def _commit(self, message: Message | None = None, offsets: list[TopicPartition] | None = None, block: bool = True) -> bool:
+        """commit attempts to store the offsets
+
+        TODO: Rewrite this logic, hacked for now."""
+        results = await self.consumer.commit(message=message, offsets=offsets, asynchronous=not block)
+
+        # asynchronous commit, a background librdkafka will handle the committing at some point
+        # in the future.
+        if results is None:
+            return False
+
+        # the topic/partitions are returned that were attempted, ensure all of them were marked as a success:
+        # TODO: don't swallow the errors
+        successes = [topic_partition for topic_partition in results if topic_partition.error() is None]
+        if len(successes) == len(results):
+            return True
+        return False
 
     # TODO: on_assign & on_revoke need to use incremental assign.
     async def _on_assign(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
@@ -179,6 +203,15 @@ class AsyncKafkaConsumer:
         considered for processing.  If False, the process loop will discard the
         message but move the offset for that particular partition forward.
         """
+        applicable: list[Message] = []
+        for message in messages:
+            if err := message.error():
+                logger.error("message error in the batch: %s", err)
+            if ok := await self.filter_func(message):
+                applicable.append(message)
+            else:
+                logger.debug("message dropped during filtering: %s:%d:%d", message.topic, message.partition, message.offset)
+
         return messages
 
     def stop(self) -> None:
