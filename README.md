@@ -29,3 +29,9 @@ It abstracts away the boilerplate of manual offset handling, shutdown coordinati
 ```
 
 ---
+
+### Contributing
+
+The project uses `testcontainers` to run an actual `kafka` container throughout integration tests to ensure it
+is tested against something that at least resembles the real world.  In order for this to function, ensure the
+`docker` service is running.

@@ -1,8 +1,8 @@
 import typing
 from dataclasses import dataclass
+from dataclasses import field
 
 from confluent_kafka import Message
-from confluent_kafka import TopicPartition
 
 
 @dataclass
@@ -24,15 +24,15 @@ class BatchResult:
     some behaviour.
     """
 
-    success: list[TopicPartition]
-    blocked: list[TopicPartition]
-    dead_letter: list[TopicPartition]
+    success: list[Message] = field(default_factory=list)
+    blocked: list[Message] = field(default_factory=list)
+    dead_letter: list[Message] = field(default_factory=list)
 
     @property
     def all_success(self) -> bool:
         """success indicates if the entire batch was a success without any blocked
         or dead letter partitions"""
-        return self.all_success and not self.dead_letter and not self.blocked
+        return self.success and not self.dead_letter and not self.blocked
 
     @property
     def should_dead_letter(self) -> bool:

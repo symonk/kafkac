@@ -26,6 +26,7 @@ class AsyncKafkaConsumer:
 
     def __init__(
         self,
+        *,
         handler_func: HandlerFunc,
         batch_size: int,
         topic_regexes: list[str],
@@ -106,7 +107,7 @@ class AsyncKafkaConsumer:
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
                 messages = await self.consumer.consume(
-                    num_messages=self.batch_size, timeot=self.poll_interval
+                    num_messages=self.batch_size, timeout=self.poll_interval
                 )
                 if not messages:
                     # Polling the broker for messages timed out without a message.
@@ -119,11 +120,18 @@ class AsyncKafkaConsumer:
                 # otherwise do not apply filtering at all and process all messages.
                 # this is useful for cases where a kafka header may prevent a lot of deserialisation
                 # in the core process loop to save sizable on time and increase throughput.
-                filtered_messages = await self._handle_filters(messages)
+                filtered_messages = (
+                    await self._handle_filters(messages)
+                    if self.filter_func
+                    else messages
+                )
                 if len(filtered_messages) == 0:
                     # the entire batch was 'filtered' out by the user.
                     # TODO: handle exceptions (RuntimeError/KafkaException)
-                    await self._commit(message=None, offsets=None, block=True)
+                    await self._commit(
+                        offsets=get_highest_offset_per_partition(filtered_messages),
+                        block=True,
+                    )
                     continue
 
                 # for each of the partitions this consumed is assigned, fan out the partitions messages
@@ -144,7 +152,10 @@ class AsyncKafkaConsumer:
                 # to manage.
                 # check if the entire batch was successful and commit all
                 if batch_result.all_success:
-                    await self._commit(message=None, offsets=None, block=True)
+                    await self._commit(
+                        offsets=get_highest_offset_per_partition(filtered_messages),
+                        block=True,
+                    )
                     continue
 
                 # check if there was dead letter fatal failures, for now hard coded printing them
@@ -152,7 +163,10 @@ class AsyncKafkaConsumer:
                 # should roll the offset forward.
                 if batch_result.dead_letter:
                     logger.info("all dead lettered!")
-                    await self._commit(message=None, offsets=None, block=True)
+                    await self._commit(
+                        offsets=get_highest_offset_per_partition(filtered_messages),
+                        block=True,
+                    )
 
                 # the most complicated scenario, the batch had a mix of successes and failures
                 # within it.  The lowest successful offset of each partition will be moved forward
@@ -180,9 +194,17 @@ class AsyncKafkaConsumer:
         """commit attempts to store the offsets
 
         TODO: Rewrite this logic, hacked for now."""
-        results = await self.consumer.commit(
-            message=message, offsets=offsets, asynchronous=not block
-        )
+        commit_kw = {
+            k: v
+            for k, v in {
+                "asynchronous": not block,
+                "message": message,
+                "offsets": offsets,
+            }.items()
+            if v is not None
+        }
+
+        results = await self.consumer.commit(**commit_kw)
 
         # asynchronous commit, a background librdkafka will handle the committing at some point
         # in the future.
@@ -194,7 +216,7 @@ class AsyncKafkaConsumer:
         successes = [
             topic_partition
             for topic_partition in results
-            if topic_partition.error() is None
+            if topic_partition.error is None
         ]
         if len(successes) == len(results):
             return True
@@ -268,3 +290,26 @@ async def throttle_cb() -> None: ...
 
 
 async def error_cb() -> None: ...
+
+
+# TODO: Move to somewhere else later
+def get_highest_offset_per_partition(messages: list[Message]) -> list[TopicPartition]:
+    tp = {}
+    for message in messages:
+        if message.partition in tp:
+            if message.offset > tp[message.offset()]:
+                tp[message.partition].append(
+                    TopicPartition(
+                        topic=message.topic(),
+                        partition=message.partition(),
+                        offset=message.offset(),
+                    )
+                )
+        else:
+            tp[message.partition] = TopicPartition(
+                topic=message.topic(),
+                partition=message.partition(),
+                offset=message.offset(),
+            )
+
+    return list(tp.values())

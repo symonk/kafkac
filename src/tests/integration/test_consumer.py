@@ -1,9 +1,15 @@
 import asyncio
 import uuid
+from mailbox import Message
 
 import pytest
 
 from kafkac import AsyncKafkaConsumer
+from kafkac.handler import BatchResult
+
+
+async def successful_test_handler(messages: list[Message]) -> BatchResult:
+    return BatchResult(success=[topic_partition for topic_partition in messages])
 
 
 @pytest.mark.asyncio
@@ -18,7 +24,10 @@ async def test_simple_container(test_kafka, message_producer) -> None:
         "partition.assignment.strategy": "cooperative-sticky",
     }
     consumer = AsyncKafkaConsumer(
-        topic_regexes=[topic.topic], librdkafka_config=consumer_config
+        handler_func=successful_test_handler,
+        batch_size=1,
+        topic_regexes=[topic.topic],
+        librdkafka_config=consumer_config,
     )
 
     async def stopper():
