@@ -9,10 +9,10 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
 
+from .exception import NoConsumerGroupIdProvidedException
 from .filter import FilterFunc
 from .handler import BatchResult
 from .handler import HandlerFunc
-from .exception import NoConsumerGroupIdProvidedException
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
