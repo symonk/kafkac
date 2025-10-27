@@ -108,8 +108,7 @@ class AsyncKafkaConsumer:
         # callbacks are firing, especially true for revoking of partitions
         self.rebalance_lock = asyncio.Lock()
 
-    @staticmethod
-    def _prepare_librdkafka_config(
+    def _prepare_librdkafka_config(self,
         user_librdkafka_config: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """
@@ -119,10 +118,12 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["enable.partition.eof"] = False
         user_librdkafka_config["enable.auto.commit"] = False
         user_librdkafka_config["enable.auto.offset.store"] = False
-        user_librdkafka_config["stats_cb"] = stats_cb
+        user_librdkafka_config.setdefault("stats_cb", stats_cb)
         # TODO: only enforce this if supporting a modern enough broker setup.
         user_librdkafka_config["group.remote.assignor"] = "cooperative-sticky"
         user_librdkafka_config["group.protocol"] = "consumer"
+        user_librdkafka_config.setdefault("error_cb", self.error_cb)
+        user_librdkafka_config.setdefault("on_throttle", throttle_cb)
         return user_librdkafka_config
 
     async def start(self) -> None:
@@ -287,6 +288,14 @@ class AsyncKafkaConsumer:
         await self.consumer.commit(asynchronous=False)
         await self.consumer.incremental_unassign(partitions)
 
+    @staticmethod
+    async def error_cb(err: KafkaError) -> None:
+        """error_cb is the default handle for global errors.  Importantly these
+        errors are pretty much informative and no real action should need to be
+        taken.  If the user does not specify one in their config, this will be
+        used instead."""
+        logger.error("received transient error: %s", err)
+
     async def _handle_filters(self, messages: list[Message]) -> list[Message]:
         """_handle_filters is responsible for evaluating message headers against
         user defined behaviour to decide if the message should be even processed
@@ -336,10 +345,6 @@ async def stats_cb(json_str: str) -> None:
 
 
 async def throttle_cb() -> None: ...
-
-
-async def error_cb(err: KafkaError) -> None:
-    logger.error("received transient error: %s", err)
 
 
 # TODO: Move to somewhere else later
