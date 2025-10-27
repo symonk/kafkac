@@ -7,8 +7,8 @@ It abstracts away the boilerplate of manual offset handling, shutdown coordinati
 > kafkac prioritises correctness and speed, in that order, avoiding message loss at all costs.
 
 > [!CAUTION]
-> Consumers, typically should always be idempotent in their processing, 100% guarantee of absolutely zero message
-> duplication is a very complex problem to solve.
+> Always write your consumer to be idempotent.  Guaranteeing you will never see a duplicate message
+> is not trivial.
 
 ---
 
