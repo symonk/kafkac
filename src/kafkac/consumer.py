@@ -4,6 +4,7 @@ import logging
 import typing
 from pprint import pformat
 
+from collections import defaultdict
 from confluent_kafka import KafkaError
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
@@ -76,7 +77,7 @@ class AsyncKafkaConsumer:
         # use with caution, in the world of duplication this can be a naive concept.
         self.stop_after = stop_after
         self.handler_func = handler_func
-        self.consumer = None
+        self.consumer: AIOConsumer | None = None
         self.running = False
         self.interrupted = False
         self.topics_regexes = topic_regexes
@@ -96,7 +97,7 @@ class AsyncKafkaConsumer:
         # is gracefully handled by the internals of the KafkaConsumer.
         # assigned partitions are topic specific, this tracks the topic name
         # to a set of partitions this consumer is currently responsible for.
-        self.assigned_partitions = dict[str, set[int]]
+        self.assigned_partitions: dict[str, set[int]] = defaultdict(set)
         # a fixed timeout for processing the batch, if 0 there is no timeout for
         # the batch.
         self.batch_timeout = float(max(batch_timeout, 0))
@@ -128,14 +129,10 @@ class AsyncKafkaConsumer:
             self.consumer = AIOConsumer(
                 consumer_conf=self.librdkafka_config, max_workers=self.workers
             )
-            # TODO: What if topics do not exist etc.
-            # TODO: Document topics can be regex based
-            # TODO: Handle on_assign, on_revoke, on_lost etc
             await self.consumer.subscribe(
                 topics=self.topics_regexes,
                 on_assign=self._on_assign,
                 on_revoke=self._on_revoke,
-                on_lost=self._on_lost,
             )
             self.running = True
             while not self.interrupted:
@@ -227,7 +224,7 @@ class AsyncKafkaConsumer:
         offsets: list[TopicPartition] | None = None,
         block: bool = True,
     ) -> bool:
-        """commit attempts to store the offsets
+        """commit acks the stored offsets.
 
         TODO: Rewrite this logic, hacked for now."""
         commit_kw = {
@@ -258,23 +255,32 @@ class AsyncKafkaConsumer:
             return True
         return False
 
-    # TODO: on_assign & on_revoke need to use incremental assign.
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
     ) -> None:
-        self.assigned_partitions = set(topic.partition for topic in partitions)
+        """on_assign retrieves the incremental partition updates.  The consumer
+        can be multi-topic aware, so we need to keep track of per topic partitions."""
+        async with self.rebalance_lock:
+            for partition in partitions:
+                topic, partition = partition.topic, partition.partition
+                self.assigned_partitions[topic].add(partition)
+        await self.consumer.incremental_assign(partitions)
 
     async def _on_revoke(
-        self, _: AIOConsumer, partitions: list[TopicPartition]
+        self, consumer: AIOConsumer, partitions: list[TopicPartition]
     ) -> None:
         """_on_revoke is called during a rebalance when this particular consumer has
         lost some of it's previously owned partitions.  It should gracefully commit
         any offsets for these partitions to prevent message duplication etc when
         reassigned to another consumer in the group."""
-        await self.consumer.commit(offsets=partitions)
+        async with self.rebalance_lock:
+            for partition in partitions:
+                topic, partition = partition.topic, partition.partition
+                self.assigned_partitions[topic].discard(partition)
 
-    async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
-        """on_lost is invoked when partitions are lost unexpectedly"""
+        # commit anything stored already.
+        await self.consumer.commit(asynchronous=False)
+        await self.consumer.incremental_unassign(partitions)
 
     async def _handle_filters(self, messages: list[Message]) -> list[Message]:
         """_handle_filters is responsible for evaluating message headers against
