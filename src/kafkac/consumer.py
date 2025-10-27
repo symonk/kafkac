@@ -137,6 +137,7 @@ class AsyncKafkaConsumer:
                 topics=self.topics_regexes,
                 on_assign=self._on_assign,
                 on_revoke=self._on_revoke,
+                on_lost=self._on_lost,
             )
             self.running = True
             while not self.interrupted:
@@ -201,7 +202,7 @@ class AsyncKafkaConsumer:
                 # dead letters are technically 'successful' and from the consumers point of view
                 # should roll the offset forward.
                 if batch_result.dead_letter:
-                    logger.info("full batch of dead letter messages")
+                    logger.debug("full batch of dead letter messages")
                     await self._commit(
                         offsets=get_highest_offset_per_partition(filtered_messages),
                         block=True,
@@ -273,7 +274,7 @@ class AsyncKafkaConsumer:
         await self.consumer.incremental_assign(partitions)
 
     async def _on_revoke(
-        self, consumer: AIOConsumer, partitions: list[TopicPartition]
+        self, _: AIOConsumer, partitions: list[TopicPartition]
     ) -> None:
         """_on_revoke is called during a rebalance when this particular consumer has
         lost some of it's previously owned partitions.  It should gracefully commit
@@ -287,6 +288,15 @@ class AsyncKafkaConsumer:
         # commit anything stored already.
         await self.consumer.commit(asynchronous=False)
         await self.consumer.incremental_unassign(partitions)
+
+    async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
+        """on_lost is invoked when partitions owned by this particular consumer are considered
+        lost.  This could be called when there is a failure in the coordinator etc.  At this
+        point (unlike on_revoke) we no longer own the partitions when this is invoked internally."""
+        async with self.rebalance_lock:
+            for partition in partitions:
+                topic, partition = partition.topic, partition.partition
+                self.assigned_partitions[topic].discard(partition)
 
     @staticmethod
     async def error_cb(err: KafkaError) -> None:
@@ -341,10 +351,11 @@ class AsyncKafkaConsumer:
 
 async def stats_cb(json_str: str) -> None:
     data = pformat(json.loads(json_str))
-    logger.info(f"received stats: {data}")
+    logger.debug(f"received stats: {data}")
 
 
-async def throttle_cb() -> None: ...
+async def throttle_cb() -> None:
+    logger.debug("throttle_cb")
 
 
 # TODO: Move to somewhere else later
