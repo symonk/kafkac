@@ -2,14 +2,15 @@ import asyncio
 import json
 import logging
 import typing
+from collections import defaultdict
 from pprint import pformat
 
-from collections import defaultdict
 from confluent_kafka import KafkaError
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
 
+from .exception import InvalidHandlerReturnTypeException
 from .exception import NoConsumerGroupIdProvidedException
 from .filter import FilterFunc
 from .handler import BatchResult
@@ -173,7 +174,9 @@ class AsyncKafkaConsumer:
                 # will try again on the next consume loop.
                 batch_result: BatchResult = await self.handler_func(filtered_messages)
                 if not isinstance(batch_result, BatchResult):
-                    raise ValueError("handler coroutines must return a `BatchResult`")
+                    raise InvalidHandlerReturnTypeException(
+                        "handler coroutines must return a `BatchResult`"
+                    )
 
                 # every partition is blocked in a transient way, next loop the same batch of messages
                 # will be retried, unless the batch was not full in which case a superset of this batch

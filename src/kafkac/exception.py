@@ -8,3 +8,7 @@ class KafkacException(Exception):
 
 class NoConsumerGroupIdProvidedException(KafkacException):
     """Raised when no `group.id` is provided in the config provided to the `AsyncKafkaConsumer` constructor"""
+
+
+class InvalidHandlerReturnTypeException(KafkacException):
+    """Raised when the return type of a handler coroutine does not return a `BatchResult` object."""
