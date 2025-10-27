@@ -9,7 +9,6 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
 
-from .dlq import DLQFunc
 from .filter import FilterFunc
 from .handler import BatchResult
 from .handler import HandlerFunc
@@ -37,7 +36,7 @@ class AsyncKafkaConsumer:
         librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
         filter_func: FilterFunc | None = None,
-        dlq_func: DLQFunc | None = None,
+        dlq_topic: str | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
         # group.id is a required parameter
@@ -60,7 +59,9 @@ class AsyncKafkaConsumer:
         self.in_retry_state = {}
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
-        self.dlq_func = dlq_func
+        # an (optional) dead letter queue topic.  For now this only supports the same cluster
+        # but will widen substantially in future.
+        self.dlq_func = dlq_topic
         # track `done` which signals after interruption, the finalizers are complete and it is safe
         # to fully close out the consumer.
         self.done = False
@@ -90,7 +91,8 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["enable.auto.commit"] = False
         user_librdkafka_config["enable.auto.offset.store"] = False
         user_librdkafka_config["stats_cb"] = stats_cb
-        # TODO: Remove later just for testing
+        # TODO: only enforce this if supporting a modern enough broker setup.
+        user_librdkafka_config["partition.assignment.strategy"] = "cooperative-sticky"
         return user_librdkafka_config
 
     async def start(self) -> None:
