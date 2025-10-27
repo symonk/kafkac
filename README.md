@@ -1,5 +1,3 @@
-from tests.integration.test_consumer import successful_test_handler
-
 ## 🐍 kafkac — A Kafka Consumer framework for python
 
 **kafkac** is a minimal, opinionated framework for building reliable Kafka consumers in Python using the [confluent-kafka](https://github.com/confluentinc/confluent-kafka-python) client.
