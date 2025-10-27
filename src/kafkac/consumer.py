@@ -59,7 +59,7 @@ class AsyncKafkaConsumer:
         self,
         *,
         handler_func: HandlerFunc,
-        librdkafka_config: dict[str, typing.Any],
+        config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
         stop_after: int = 0,
@@ -69,7 +69,7 @@ class AsyncKafkaConsumer:
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
         # group.id is a required parameter
-        if "group.id" not in librdkafka_config:
+        if "group.id" not in config:
             raise NoConsumerGroupIdProvidedException(
                 "consumer must be assigned a `group.id` in the librdkafka config"
             )
@@ -84,7 +84,7 @@ class AsyncKafkaConsumer:
         self.running = False
         self.interrupted = False
         self.topics_regexes = topic_regexes
-        self.librdkafka_config = self._prepare_librdkafka_config(librdkafka_config)
+        self.librdkafka_config = self._prepare_librdkafka_config(config)
         self.in_retry_state = {}
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
@@ -108,7 +108,8 @@ class AsyncKafkaConsumer:
         # callbacks are firing, especially true for revoking of partitions
         self.rebalance_lock = asyncio.Lock()
 
-    def _prepare_librdkafka_config(self,
+    def _prepare_librdkafka_config(
+        self,
         user_librdkafka_config: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """
@@ -123,7 +124,7 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["group.remote.assignor"] = "cooperative-sticky"
         user_librdkafka_config["group.protocol"] = "consumer"
         user_librdkafka_config.setdefault("error_cb", self.error_cb)
-        user_librdkafka_config.setdefault("on_throttle", throttle_cb)
+        user_librdkafka_config.setdefault("throttle_cb", throttle_cb)
         return user_librdkafka_config
 
     async def start(self) -> None:

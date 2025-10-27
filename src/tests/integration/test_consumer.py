@@ -26,7 +26,7 @@ async def test_simple_container(test_kafka, message_producer) -> None:
         handler_func=successful_test_handler,
         batch_size=1,
         topic_regexes=[topic.topic],
-        librdkafka_config=consumer_config,
+        config=consumer_config,
     )
 
     async def stopper():

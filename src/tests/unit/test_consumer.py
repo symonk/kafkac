@@ -9,7 +9,7 @@ def test_missing_group_id_raises_value_error() -> None:
             handler_func=None,
             batch_size=1,
             topic_regexes=("foo",),
-            librdkafka_config={},
+            config={},
         )
     assert (
         str(err.value)

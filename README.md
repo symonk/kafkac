@@ -1,3 +1,5 @@
+from tests.integration.test_consumer import successful_test_handler
+
 ## 🐍 kafkac — A Kafka Consumer framework for python
 
 **kafkac** is a minimal, opinionated framework for building reliable Kafka consumers in Python using the [confluent-kafka](https://github.com/confluentinc/confluent-kafka-python) client.
@@ -40,7 +42,32 @@ process those messages, writing the messages to another topic, confirming all th
 ### 🧠 Quick Start
 
 ```python
-# TODO!
+import asyncio
+
+from kafkac import AsyncKafkaConsumer
+from kafkac import BatchResult
+from confluent_kafka import Message
+
+async def handler(messages: list[Message]) -> BatchResult:
+    return BatchResult(success=messages)
+
+async def main():
+    config={
+        "group.id": "foo",
+        "bootstrap.servers": "localhost:9092",
+    },
+    async with AsyncKafkaConsumer(
+        handler_func=handler,
+        config=config,
+        topic_regexes=["^topic$"],
+        batch_size=1000,
+    ) as consumer:
+        await consumer.start()
+
+
+if __name__ == "__main__":
+    asyncio.gather(main())
+
 ```
 
 ---
