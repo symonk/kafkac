@@ -13,8 +13,9 @@ async def successful_test_handler(messages: list[Message]) -> BatchResult:
 
 
 @pytest.mark.asyncio
-async def test_simple_container(test_kafka, message_producer) -> None:
-    bootstrap_config, container, topic = test_kafka
+@pytest.mark.parametrize("run", range(3))
+async def test_simple_container(run, test_topic, message_producer) -> None:
+    bootstrap_config, container, topic = test_topic
     message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
     bootstrap_config["group.id"] = "basic-test"
     consumer_config = {
@@ -24,7 +25,7 @@ async def test_simple_container(test_kafka, message_producer) -> None:
     }
     consumer = AsyncKafkaConsumer(
         handler_func=successful_test_handler,
-        batch_size=1,
+        batch_size=1000,
         topic_regexes=[topic.topic],
         config=consumer_config,
     )

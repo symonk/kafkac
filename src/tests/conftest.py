@@ -7,36 +7,44 @@ from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.admin import NewTopic
 from testcontainers.kafka import KafkaContainer
+from filelock import FileLock
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_PARTITIONS = 40
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def test_kafka(
-    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> typing.Generator[
-    tuple[dict[str, typing.Any], KafkaContainer, NewTopic], None, None
+    tuple[dict[str, typing.Any], KafkaContainer], None, None
 ]:
-    """kafka_cluster is a fixture that creates a new kafka cluster
-    for each test that uses it.  The cluster contains a single topic
-    named after the test node name.  The topic created can be configured
-    by the test by passing indirect values through parameterization.
+    """test_kafka sets up a pytest-xdist aware kafka cluster for testing.
+    tests should not use this fixture, but instead the others which reference
+    this fixture internally.  This enables a cluster, tests should specify
+    their own topic to narrow their testing but keep things reliable and fast
 
-    If specified, these should be of type `NewTopic` types from the confluent kafka
-    admin package.
-
-    If the fixture is used without injecting any custom topic variables the topic will be named
-    after the node name and the default partitions of 40 will be used.
+    This fixture uses a filelock so it will only execute once, regardless of if
+    pytest-xdist is used or not.
     """
+    root_tmp_dir = tmp_path_factory.getbasetemp().parent
+    fn = root_tmp_dir / "data.json"
+    with FileLock(str(fn) + ".lock"):
+        with KafkaContainer().with_kraft() as kafka:
+            connection = kafka.get_bootstrap_server()
+            bootstrap_cfg = {"bootstrap.servers": connection}
+            yield bootstrap_cfg, kafka
+
+
+@pytest.fixture(scope="function")
+def test_topic(request: pytest.FixtureRequest,
+               test_kafka) -> typing.Generator[tuple[dict[str, typing.Any], KafkaContainer, NewTopic], None, None]:
+    bootstrap_cfg, kafka = test_kafka
     topic = getattr(request, "param", NewTopic(request.node.name, DEFAULT_PARTITIONS))
-    with KafkaContainer().with_kraft() as kafka:
-        connection = kafka.get_bootstrap_server()
-        bootstrap_cfg = {"bootstrap.servers": connection}
-        admin = AdminClient(bootstrap_cfg)
-        admin.create_topics([topic])
-        yield bootstrap_cfg, kafka, topic
+    admin = AdminClient(bootstrap_cfg)
+    admin.create_topics([topic])
+    yield bootstrap_cfg, kafka, topic
 
 
 @pytest.fixture(scope="function")
@@ -46,6 +54,7 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
     ) -> None:
         """simple_producer is a fixture that creates dummy data into kafka
         for testing the AsyncKafkaConsumer downstream."""
+        bootstrap_config["message.send.max.retries"] = 1 # catch errors in test faster.
         start = time.monotonic()
         logger.info(f"producing {count} messages")
 
