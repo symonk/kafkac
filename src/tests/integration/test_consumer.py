@@ -21,7 +21,6 @@ async def test_simple_container(test_kafka, message_producer) -> None:
         "bootstrap.servers": bootstrap_config.get("bootstrap.servers"),
         "group.id": str(uuid.uuid4()),
         "auto.offset.reset": "earliest",
-        "partition.assignment.strategy": "cooperative-sticky",
     }
     consumer = AsyncKafkaConsumer(
         handler_func=successful_test_handler,

@@ -119,8 +119,8 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["enable.auto.offset.store"] = False
         user_librdkafka_config["stats_cb"] = stats_cb
         # TODO: only enforce this if supporting a modern enough broker setup.
-        user_librdkafka_config["partition.assignment.strategy"] = "cooperative-sticky"
-        user_librdkafka_config["group.type"] = "consumer"
+        user_librdkafka_config["group.remote.assignor"] = "cooperative-sticky"
+        user_librdkafka_config["group.protocol"] = "consumer"
         return user_librdkafka_config
 
     async def start(self) -> None:
