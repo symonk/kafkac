@@ -16,6 +16,8 @@ from .filter import FilterFunc
 from .handler import BatchResult
 from .handler import HandlerFunc
 
+# add a non-intrusive logger, allowing clients to view some useful information
+# but not getting in their way.
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
