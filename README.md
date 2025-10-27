@@ -60,7 +60,10 @@ async def main():
         topic_regexes=["^topic$"],
         batch_size=1000,
     ) as consumer:
-        await consumer.start()
+        await asyncio.sleep(60)
+        await consumer.stop()
+        # context manager will exit cleanly once the consumer has finalised.
+        # last messages will be processed and handled before graceful exit.
 
 
 if __name__ == "__main__":
