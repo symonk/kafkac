@@ -198,7 +198,7 @@ class AsyncKafkaConsumer:
                 # dead letters are technically 'successful' and from the consumers point of view
                 # should roll the offset forward.
                 if batch_result.dead_letter:
-                    logger.info("all dead lettered!")
+                    logger.info("full batch of dead letter messages")
                     await self._commit(
                         offsets=get_highest_offset_per_partition(filtered_messages),
                         block=True,
@@ -317,14 +317,14 @@ class AsyncKafkaConsumer:
         This will still allow in flight batches to be processed."""
         self.interrupted = True
 
-    def __enter__(self) -> typing.Self:
+    async def __aenter__(self) -> typing.Self:
         """__enter__ allows the KafkaConsumer instance to be used as a context
         manager, guaranteeing its graceful exit and teardown."""
-        self.start()
+        await self.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.consumer.close()
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        await self.consumer.close()
         return None
 
 
