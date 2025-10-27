@@ -12,28 +12,53 @@ from confluent_kafka.experimental.aio import AIOConsumer
 from .filter import FilterFunc
 from .handler import BatchResult
 from .handler import HandlerFunc
+from .exception import NoConsumerGroupIdProvidedException
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
 class AsyncKafkaConsumer:
-    """KafkaConsumer wraps the confluent kafka consumer and offers improved
-    developer experience and edge case handling automatically.
+    """
+    AsyncKafkaConsumer is a fully asynchronously kafka consumer, ready for use
+    out of the box. It is a little opinionated in some of the decisions it makes,
+    these are outlined below, but it is worth noting, they are not set in stone
+    and are very likely to change as the library evolves:
 
-    # TODO: Testing
-    # TODO: Signal handling and graceful shutdown
-    # TODO: Document 'common' librdkafka settings (auto commit, acks etc)
+        * Enforced cooperative sticky rebalancing for incremental updates, preventing
+        a stop-the-world rebalancing scenario.
+        * Auto commit is disabled, user code should provide appropriate coroutines for
+        handling the logic and should trust the AsyncKafkaConsumer to handle all scenarios
+        gracefully, including rebalancing, dead lettering and transient vs non-transient
+        error handling.
+
+    The bare minimum required is to provide a coroutine handler for delegating the business
+    logic of your application, this will be provided messages by the consumer.  Additionally,
+    if a dead letter topic is provided in the initializer, kafkac will automatically detect
+    poison-pill messages and dead letter them.  Kafkac is not opinionated on a dead letter
+    queue scenario, should you choose multiple time based DLQ topics before a final store
+    that is entirely upto the user, kafkac will only move messages onto the topic provided.
+
+    A `group.id` must be provided in the options provided, this is fatal if not provided
+    and an exception will be raised.
+
+    In the future it will be possible to configure an entire DLQ config, where it may even be
+    sending to another MSK in aws for example than the one consuming from the core topic(s).
+
+    The `AsyncKafkaConsumer` only accepts keyword args for making backwards compatibility
+    easier to manage in the future.
+
+    TODO: Document latency vs throughput scenarios and tuning.
     """
 
     def __init__(
         self,
         *,
         handler_func: HandlerFunc,
+        librdkafka_config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
         stop_after: int = 0,
-        librdkafka_config: dict[str, typing.Any],
         poll_interval: float = 0.1,
         filter_func: FilterFunc | None = None,
         dlq_topic: str | None = None,
@@ -41,7 +66,7 @@ class AsyncKafkaConsumer:
     ) -> None:
         # group.id is a required parameter
         if "group.id" not in librdkafka_config:
-            raise ValueError(
+            raise NoConsumerGroupIdProvidedException(
                 "consumer must be assigned a `group.id` in the librdkafka config"
             )
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
@@ -60,7 +85,7 @@ class AsyncKafkaConsumer:
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
-        # but will widen substantially in future.
+        # but will widen substantially in the future.
         self.dlq_func = dlq_topic
         # track `done` which signals after interruption, the finalizers are complete and it is safe
         # to fully close out the consumer.
@@ -93,6 +118,7 @@ class AsyncKafkaConsumer:
         user_librdkafka_config["stats_cb"] = stats_cb
         # TODO: only enforce this if supporting a modern enough broker setup.
         user_librdkafka_config["partition.assignment.strategy"] = "cooperative-sticky"
+        user_librdkafka_config["group.type"] = "consumer"
         return user_librdkafka_config
 
     async def start(self) -> None:

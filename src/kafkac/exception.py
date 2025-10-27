@@ -4,3 +4,7 @@ class KafkacException(Exception):
 
     def __init__(self, msg: str) -> None:
         super().__init__(msg)
+
+
+class NoConsumerGroupIdProvidedException(KafkacException):
+    """Raised when no `group.id` is provided in the config provided to the `AsyncKafkaConsumer` constructor"""
