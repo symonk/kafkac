@@ -62,7 +62,6 @@ class AsyncKafkaConsumer:
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
-        stop_after: int = 0,
         poll_interval: float = 0.1,
         filter_func: FilterFunc | None = None,
         dlq_topic: str | None = None,
@@ -76,9 +75,6 @@ class AsyncKafkaConsumer:
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
         # 1M messages, if higher than this the core library will raise an error on consume(...)
         self.batch_size = min(max(batch_size, 1), 1_000_000)
-        # automatic shutdown after a fixed number of messages have been processed.
-        # use with caution, in the world of duplication this can be a naive concept.
-        self.stop_after = stop_after
         self.handler_func = handler_func
         self.consumer: AIOConsumer | None = None
         self.running = False
