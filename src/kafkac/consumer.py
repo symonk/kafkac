@@ -93,6 +93,10 @@ class AsyncKafkaConsumer:
         # the timeout to wait while trying to get a batch of messages.  If this timeout is exceeded
         # before the batch is full, a partial batch will be returned and processed.
         self.poll_interval = max(0.1, poll_interval)
+        # an (optional) awaitable that is invoked for each message received.  If specified only messages
+        # that return `True` will be processed by the consumer.  Returning `False` for a message will
+        # cause the offset to be stored and ignored, future polls to the message buffer will of moved on
+        # without processing.
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
