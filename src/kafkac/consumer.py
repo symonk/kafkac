@@ -95,8 +95,9 @@ class AsyncKafkaConsumer:
         self.poll_interval = max(0.1, poll_interval)
         # an (optional) awaitable that is invoked for each message received.  If specified only messages
         # that return `True` will be processed by the consumer.  Returning `False` for a message will
-        # cause the offset to be stored and ignored, future polls to the message buffer will of moved on
+        # cause the offset to be stored and ignored, future polls to the message buffer will move on
         # without processing.
+        # Note: for multiple cases, build a wrapped composite function.
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
