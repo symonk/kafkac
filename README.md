@@ -18,7 +18,7 @@ It abstracts away the boilerplate of manual offset handling, shutdown coordinati
 - 🧬 Version-aware model deserialization (Pydantic)
 - 🛡 Handles common Kafka edge cases and failure scenarios
 - 📦 Batch consumption to reduce RTT and executor overhead
-- 🧾 Header-level message filtering support
+- 🧾 Header-level message filtering support with out of the box filters
 - 📊 Built-in metrics & OpenTelemetry integration
 - 🧩 Pluggable middleware for pre/post-processing
 - 🪦 Automatic dead-letter queueing for poison-pill messages
