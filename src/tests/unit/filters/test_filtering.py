@@ -1,5 +1,5 @@
 import pytest
-from pytest_mock import MockType
+from pytest_mock import MockerFixture
 
 from kafkac.filters import filter_contains_header_fn
 
@@ -12,24 +12,27 @@ integration tests should also be added.
 
 
 @pytest.mark.asyncio
-async def test_without_headers(mocker: MockType):
+async def test_without_headers(mocker: MockerFixture) -> None:
     message = mocker.Mock()
     message.headers.return_value = None
     coro = filter_contains_header_fn(message)
     assert not await coro(message)
+    message.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_filter_contains_header_fn(mocker: MockType):
+async def test_filter_contains_header_fn(mocker: MockerFixture):
     message = mocker.Mock()
     message.headers.return_value = [("foo", b"value")]
     coro = filter_contains_header_fn("foo")
     assert await coro(message)
+    message.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_filter_contains_header_fn_invalid(mocker: MockType):
+async def test_filter_contains_header_fn_invalid(mocker: MockerFixture):
     message = mocker.Mock()
     message.headers.return_value = [("foo", b"value")]
     coro = filter_contains_header_fn("no")
     assert not await coro(message)
+    message.assert_called_once()
