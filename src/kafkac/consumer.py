@@ -81,7 +81,7 @@ class AsyncKafkaConsumer:
         self.running = False
         self.interrupted = False
         self.topics_regexes = topic_regexes
-        self.librdkafka_config = self._prepare_librdkafka_config(config)
+        self.librdkafka_config = self._prepare_cfg(config)
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
@@ -104,25 +104,25 @@ class AsyncKafkaConsumer:
         # callbacks are firing, especially true for revoking of partitions
         self.rebalance_lock = asyncio.Lock()
 
-    def _prepare_librdkafka_config(
+    def _prepare_cfg(
         self,
-        user_librdkafka_config: dict[str, typing.Any],
+        user_cfg: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """
         TODO: Implement, we should probably enforce auto commit offset off, and maybe some others.
         :return:
         """
-        user_librdkafka_config["enable.partition.eof"] = False
-        user_librdkafka_config["enable.auto.commit"] = False
-        user_librdkafka_config["enable.auto.offset.store"] = False
-        user_librdkafka_config.setdefault("stats_cb", stats_cb)
+        user_cfg["enable.partition.eof"] = False
+        user_cfg["enable.auto.commit"] = False
+        user_cfg["enable.auto.offset.store"] = False
+        user_cfg.setdefault("stats_cb", stats_cb)
         # TODO: only enforce this if supporting a modern enough broker setup.
-        user_librdkafka_config["group.remote.assignor"] = "cooperative-sticky"
-        user_librdkafka_config["group.consumer.session.timeout.ms"] = 45000
-        user_librdkafka_config["group.protocol"] = "consumer"
-        user_librdkafka_config.setdefault("error_cb", self.error_cb)
-        user_librdkafka_config.setdefault("throttle_cb", throttle_cb)
-        return user_librdkafka_config
+        user_cfg["group.remote.assignor"] = "cooperative-sticky"
+        user_cfg["group.consumer.session.timeout.ms"] = 45000
+        user_cfg["group.protocol"] = "consumer"
+        user_cfg.setdefault("error_cb", self.error_cb)
+        user_cfg.setdefault("throttle_cb", throttle_cb)
+        return user_cfg
 
     async def start(self) -> None:
         """start signals the consumer to actually begin.  This is implicit
