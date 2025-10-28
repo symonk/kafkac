@@ -10,9 +10,10 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
 
+from kafkac.filters.filter import FilterFunc
+
 from .exception import InvalidHandlerReturnTypeException
 from .exception import NoConsumerGroupIdProvidedException
-from .filter import FilterFunc
 from .handler import BatchResult
 from .handler import HandlerFunc
 
@@ -118,6 +119,7 @@ class AsyncKafkaConsumer:
         user_librdkafka_config.setdefault("stats_cb", stats_cb)
         # TODO: only enforce this if supporting a modern enough broker setup.
         user_librdkafka_config["group.remote.assignor"] = "cooperative-sticky"
+        user_librdkafka_config["group.consumer.session.timeout.ms"] = 45000
         user_librdkafka_config["group.protocol"] = "consumer"
         user_librdkafka_config.setdefault("error_cb", self.error_cb)
         user_librdkafka_config.setdefault("throttle_cb", throttle_cb)
