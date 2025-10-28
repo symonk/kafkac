@@ -13,6 +13,7 @@ repos:
     - id: double-quote-string-fixer
     - id: end-of-file-fixer
     - id: name-tests-test
+      args: [--pytest-test-first]
     - id: pretty-format-json
     - id: trailing-whitespace
 - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -28,3 +29,4 @@ repos:
     rev: 'v1.18.2'
     hooks:
     -   id: mypy
+        args: ["--config-file=pyproject.toml"]

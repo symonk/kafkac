@@ -82,7 +82,6 @@ class AsyncKafkaConsumer:
         self.interrupted = False
         self.topics_regexes = topic_regexes
         self.librdkafka_config = self._prepare_librdkafka_config(config)
-        self.in_retry_state = {}
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
@@ -159,7 +158,7 @@ class AsyncKafkaConsumer:
                 # in the core process loop to save sizable on time and increase throughput.
                 filtered_messages = (
                     await self._handle_filters(messages)
-                    if self.filter_func
+                    if self.filter_func is not None
                     else messages
                 )
                 if len(filtered_messages) == 0:

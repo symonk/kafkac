@@ -32,7 +32,9 @@ class BatchResult:
     def all_success(self) -> bool:
         """success indicates if the entire batch was a success without any blocked
         or dead letter partitions"""
-        return self.success and not self.dead_letter and not self.blocked
+        return (
+            bool(self.success) and not bool(self.dead_letter) and not bool(self.blocked)
+        )
 
     @property
     def should_dead_letter(self) -> bool:
@@ -44,7 +46,11 @@ class BatchResult:
     def all_transient(self) -> bool:
         """all_transient implies all partitions are blocked but not in a fatal enough way
         to dead letter."""
-        return not self.all_success and not self.dead_letter and self.blocked
+        return (
+            not bool(self.all_success)
+            and not bool(self.dead_letter)
+            and bool(self.blocked)
+        )
 
 
 # HandlerFunc defines the core type that user defined handlers should implement.
