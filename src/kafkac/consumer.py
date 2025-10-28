@@ -76,21 +76,30 @@ class AsyncKafkaConsumer:
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
         # 1M messages, if higher than this the core library will raise an error on consume(...)
         self.batch_size = min(max(batch_size, 1), 1_000_000)
+        # handler_func allows the user to handle their business logic on a batch basis,
+        # returning tri-state to the consumer (successes, to be retried, to be dead lettered).
         self.handler_func = handler_func
+        # the core confluent_kafka asynchronous consumer.
         self.consumer: AIOConsumer | None = None
+        # marks the consumer as running when start() is awaited.
         self.running = False
+        # signals the consumer has been interrupted or `stop() is awaited.
         self.interrupted = False
         self.topics_regexes = topic_regexes
+        # The core librdkafka configuration settings.
+        # note: kafkac makes some strong opinions and overrides alot of configuration
+        # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
         self.librdkafka_config = self._prepare_cfg(config)
+        # the timeout to wait while trying to get a batch of messages.  If this timeout is exceeded
+        # before the batch is full, a partial batch will be returned and processed.
         self.poll_interval = max(0.1, poll_interval)
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
         self.dlq_func = dlq_topic
-        # track `done` which signals after interruption, the finalizers are complete and it is safe
-        # to fully close out the consumer.
-        self.done = False
-        self.workers = 8  # TODO: Derive this, or make it available to users.
+        # how many workers the thread pool can utilise when calling confluent kafka messages
+        # that would block the event loop.
+        self.workers = 2  # TODO: Derive this, or make it available to users.
         # keep track of the partitions assigned to this particular consumer
         # within the group.  Rebalance events can be common, rebalancing
         # is gracefully handled by the internals of the KafkaConsumer.
