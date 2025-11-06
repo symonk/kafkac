@@ -80,6 +80,7 @@ class AsyncKafkaConsumer:
         filter_func: FilterFunc | None = None,
         dlq_topic: str | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
+        commit_strategy: typing.Literal["sync", "async"] = "sync",
     ) -> None:
         if not isinstance(handler_func, MessageHandlerFunc | MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -136,6 +137,9 @@ class AsyncKafkaConsumer:
         # during rebalancing, it is important to prevent message processing while
         # callbacks are firing, especially true for revoking of partitions
         self.rebalance_lock = asyncio.Lock()
+        # how commits should be handled after offsets are stored.
+        # `async` can provide more throughput with potentially more duplicate messages
+        self.commit_strategy = commit_strategy
 
     def _prepare_cfg(
         self,
@@ -211,7 +215,7 @@ class AsyncKafkaConsumer:
                 # as part of the processing, the task will return the highest successful offset for the
                 # given partition, allowing us to commit that.
 
-                # for each of the partitions this consumed is assigned, fan out the partitions messages
+                # for each of the partitions this consumer is assigned, fan out the partitions messages
                 # as one transactional unit of work.  Should any message fail throughout processing the
                 # entire batch is abandoned and the partition will be considered blocked, not stored and
                 # will try again on the next consume loop.
