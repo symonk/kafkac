@@ -96,6 +96,7 @@ class AsyncKafkaConsumer:
         self.running = False
         # signals the consumer has been interrupted or `stop() is awaited.
         self.interrupted = False
+        # the topic regexes that the consumer should subscribe too.
         self.topics_regexes = topic_regexes
         # The core librdkafka configuration settings.
         # note: kafkac makes some strong opinions and overrides alot of configuration
