@@ -12,3 +12,7 @@ class NoConsumerGroupIdProvidedException(KafkacException):
 
 class InvalidHandlerReturnTypeException(KafkacException):
     """Raised when the return type of a handler coroutine does not return a `BatchResult` object."""
+
+
+class InvalidHandlerFunctionException(KafkacException):
+    """Raised when the client does not provide the appropriate type for processing handler funcs"""

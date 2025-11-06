@@ -12,11 +12,12 @@ from confluent_kafka.experimental.aio import AIOConsumer
 
 from kafkac.filters.filter import FilterFunc
 
+from .exception import InvalidHandlerFunctionException
 from .exception import InvalidHandlerReturnTypeException
 from .exception import NoConsumerGroupIdProvidedException
 from .handler import BatchResult
-from .handler import SingleMessageHandlerFunc
-from .handler import BatchMessageHandlerFunc
+from .handler import MessageHandlerFunc
+from .handler import MessagesHandlerFunc
 from .message_util import get_highest_offset_per_partition
 from .models import Batch
 from .worker import processor
@@ -71,7 +72,7 @@ class AsyncKafkaConsumer:
     def __init__(
         self,
         *,
-        handler_func: SingleMessageHandlerFunc | BatchMessageHandlerFunc,
+        handler_func: MessageHandlerFunc | MessagesHandlerFunc,
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
@@ -80,6 +81,11 @@ class AsyncKafkaConsumer:
         dlq_topic: str | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
     ) -> None:
+        if not isinstance(handler_func, MessageHandlerFunc | MessagesHandlerFunc):
+            raise InvalidHandlerFunctionException(
+                "type of handler_func must be `MessageHandlerFunc` or `MessagesHandlerFunc`"
+            )
+
         # group.id is a required parameter
         if "group.id" not in config:
             raise NoConsumerGroupIdProvidedException(

@@ -53,8 +53,15 @@ class BatchResult:
         )
 
 
-# SingleMessageHandlerFunc accepts a single message, processes it and returns a result.
-SingleMessageHandlerFunc = typing.Callable[[Message], typing.Awaitable[BatchResult]]
-# BatchMessageHandlerFunc accepts a list of messages, from the same partition/topic, processes
-# it and returns a result
-BatchMessageHandlerFunc = typing.Callable[[list[Message]], typing.Awaitable[BatchResult]]
+@typing.runtime_checkable
+class MessageHandlerFunc(typing.Protocol):
+    """MessageHandlerFunc handles a single message."""
+
+    async def __call__(self, message: Message) -> BatchResult: ...
+
+
+@typing.runtime_checkable
+class MessagesHandlerFunc(typing.Protocol):
+    """MessagesHandlerFunc handles multiple messages."""
+
+    async def __call__(self, messages: list[Message]) -> BatchResult: ...
