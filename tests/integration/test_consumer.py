@@ -11,6 +11,37 @@ from kafkac.handler import BatchResult
 async def successful_test_handler(messages: list[Message]) -> BatchResult:
     return BatchResult(success=[topic_partition for topic_partition in messages])
 
+@pytest.mark.asyncio
+async def test_multiple_topic_regex_subscription_works_correctly() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_consumer_handles_fully_filtered_batches_successfully() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_filter_funcs_are_handled_correctly() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_consumer_throttles_when_throughput_is_zero() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_parallel_tasks_are_spawned_correctly_for_many_topics() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_consumer_handles_successful_batch_correctly() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_consumer_handles_partial_batch_correctly() -> None:
+    ...
+
+@pytest.mark.asyncio
+async def test_consumer_handles_rebalancing_gracefully() -> None:
+    ...
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run", range(3))
