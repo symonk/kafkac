@@ -15,7 +15,8 @@ from kafkac.filters.filter import FilterFunc
 from .exception import InvalidHandlerReturnTypeException
 from .exception import NoConsumerGroupIdProvidedException
 from .handler import BatchResult
-from .handler import HandlerFunc
+from .handler import SingleMessageHandlerFunc
+from .handler import BatchMessageHandlerFunc
 from .message_util import get_highest_offset_per_partition
 from .models import Batch
 from .worker import processor
@@ -70,7 +71,7 @@ class AsyncKafkaConsumer:
     def __init__(
         self,
         *,
-        handler_func: HandlerFunc,
+        handler_func: SingleMessageHandlerFunc | BatchMessageHandlerFunc,
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],

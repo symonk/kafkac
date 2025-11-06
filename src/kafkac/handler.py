@@ -53,6 +53,8 @@ class BatchResult:
         )
 
 
-# HandlerFunc defines the core type that user defined handlers should implement.
-# The AsyncConsumer expects a handler func.
-HandlerFunc = typing.Callable[[Message], typing.Awaitable[BatchResult]]
+# SingleMessageHandlerFunc accepts a single message, processes it and returns a result.
+SingleMessageHandlerFunc = typing.Callable[[Message], typing.Awaitable[BatchResult]]
+# BatchMessageHandlerFunc accepts a list of messages, from the same partition/topic, processes
+# it and returns a result
+BatchMessageHandlerFunc = typing.Callable[[list[Message]], typing.Awaitable[BatchResult]]
