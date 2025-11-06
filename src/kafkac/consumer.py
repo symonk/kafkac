@@ -16,6 +16,9 @@ from .exception import InvalidHandlerReturnTypeException
 from .exception import NoConsumerGroupIdProvidedException
 from .handler import BatchResult
 from .handler import HandlerFunc
+from .message_util import get_highest_offset_per_partition
+from .models import Batch
+from .worker import processor
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way.
@@ -52,6 +55,14 @@ class AsyncKafkaConsumer:
 
     The `AsyncKafkaConsumer` only accepts keyword args for making backwards compatibility
     easier to manage in the future.
+
+    The default algorithm of the consumer is as follows:
+        * Fetch (upto) batch size of messages from kafka
+        * Group messages into topic:partition ordered batches
+            * Optionally throw away messages that should be filtered by filter_func
+        * Process per topic, per partition batches in parallel, but synchronously within the batch
+        * Depending on results, commit highest successful offsets
+        * If anything is marked for dead lettering, produce the original message into the DLQ
 
     TODO: Document latency vs throughput scenarios and tuning.
     """
@@ -122,10 +133,7 @@ class AsyncKafkaConsumer:
         self,
         user_cfg: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
-        """
-        TODO: Implement, we should probably enforce auto commit offset off, and maybe some others.
-        :return:
-        """
+        """TODO: Document"""
         user_cfg["enable.partition.eof"] = False
         user_cfg["enable.auto.commit"] = False
         user_cfg["enable.auto.offset.store"] = False
@@ -166,29 +174,42 @@ class AsyncKafkaConsumer:
                     # CPU loop, the consume call will delay this particular task.
                     continue
 
-                # for each of the messages, apply a user defined filter (if specified)
-                # otherwise do not apply filtering at all and process all messages.
-                # this is useful for cases where a kafka header may prevent a lot of deserialisation
-                # in the core process loop to save sizable on time and increase throughput.
-                filtered_messages = (
-                    await self._handle_filters(messages)
-                    if self.filter_func is not None
-                    else messages
-                )
-                if len(filtered_messages) == 0:
+                # filtered messages is the grouped messages, as in topic partition
+                # ordered messages where messages that did not pass the filter are
+                # removed.  The (optional) user supplied filter_func is applied to each message
+                # and allows ignoring messages that do not meet the criteria.
+                # by default, no messages are filtered.
+                processed_batch_messages = await self._prepare_batch(messages)
+                if not processed_batch_messages:
                     # the entire batch was 'filtered' out by the user.
                     # TODO: handle exceptions (RuntimeError/KafkaException)
                     await self._commit(
-                        offsets=get_highest_offset_per_partition(filtered_messages),
+                        offsets=get_highest_offset_per_partition(messages),
                         block=True,
                     )
                     continue
+
+                # for each of the grouped messages, fan out a task that processes them
+                # synchronously per partition in order to guarantee the ordering.
+                # TODO: In future a user may not care about order, we will support that later.
+                processor_tasks = [
+                    asyncio.create_task(
+                        processor(messages, self.handler_func)
+                        for messages in processed_batch_messages.messages
+                    )
+                    for _ in range(len(processed_batch_messages.messages))
+                ]
+
+                # as part of the processing, the task will return the highest successful offset for the
+                # given partition, allowing us to commit that.
 
                 # for each of the partitions this consumed is assigned, fan out the partitions messages
                 # as one transactional unit of work.  Should any message fail throughout processing the
                 # entire batch is abandoned and the partition will be considered blocked, not stored and
                 # will try again on the next consume loop.
-                batch_result: BatchResult = await self.handler_func(filtered_messages)
+                batch_result: BatchResult = await self.handler_func(
+                    processed_batch_messages
+                )
                 if not isinstance(batch_result, BatchResult):
                     raise InvalidHandlerReturnTypeException(
                         "handler coroutines must return a `BatchResult`"
@@ -205,7 +226,9 @@ class AsyncKafkaConsumer:
                 # check if the entire batch was successful and commit all
                 if batch_result.all_success:
                     await self._commit(
-                        offsets=get_highest_offset_per_partition(filtered_messages),
+                        offsets=get_highest_offset_per_partition(
+                            processed_batch_messages
+                        ),
                         block=True,
                     )
                     continue
@@ -216,7 +239,9 @@ class AsyncKafkaConsumer:
                 if batch_result.dead_letter:
                     logger.debug("full batch of dead letter messages")
                     await self._commit(
-                        offsets=get_highest_offset_per_partition(filtered_messages),
+                        offsets=get_highest_offset_per_partition(
+                            processed_batch_messages
+                        ),
                         block=True,
                     )
 
@@ -318,32 +343,35 @@ class AsyncKafkaConsumer:
         used instead."""
         logger.error("received transient error: %s", err)
 
-    async def _handle_filters(self, messages: list[Message]) -> list[Message]:
-        """_handle_filters is responsible for evaluating message headers against
-        user defined behaviour to decide if the message should be even processed
-        at all.  This allows filtering on particular versions, or where a header
-        may dictate routing for particular environments etc that share the same
-        AWS MSK etc.
+    async def _prepare_batch(self, messages: list[Message]) -> Batch:
+        """_prepare_batch groups the messages which could span multiple topics into
+        their post-filtered lists, retaining order of messages for the individual
+        partitions.  The returned batch consists of many `GroupedMessages` which are
+        per partition lists for each topic.
 
-        _handle_filters returns a boolean indicating if the message should be
-        considered for processing.  If False, the process loop will discard the
-        message but move the offset for that particular partition forward.
+        If no filter_func was specified, all messages are included, otherwise messages
+        are ignored that match the users filter criteria.  This allows iterating the batch
+        messages only once, to group them and filter, ready for fanning out to workers
+        for processing.
         """
-        applicable: list[Message] = []
+        batch = Batch()
         for message in messages:
             if err := message.error():
                 logger.error("message error in the batch: %s", err)
-            if await self.filter_func(message):
-                applicable.append(message)
+            if self.filter_func is not None:
+                if await self.filter_func(message):
+                    batch.store(message)
+                else:
+                    # TODO: Register an event system that ca be subscribed too rather than logging.
+                    logger.debug(
+                        "message dropped during filtering: %s:%d:%d",
+                        message.topic,
+                        message.partition,
+                        message.offset,
+                    )
             else:
-                logger.debug(
-                    "message dropped during filtering: %s:%d:%d",
-                    message.topic,
-                    message.partition,
-                    message.offset,
-                )
-
-        return messages
+                batch.store(message)
+        return batch
 
     def stop(self) -> None:
         """stop signals that the consumer should begin a graceful shutdown.
@@ -368,26 +396,3 @@ async def stats_cb(json_str: str) -> None:
 
 async def throttle_cb() -> None:
     logger.debug("throttle_cb")
-
-
-# TODO: Move to somewhere else later
-def get_highest_offset_per_partition(messages: list[Message]) -> list[TopicPartition]:
-    tp = {}
-    for message in messages:
-        if message.partition in tp:
-            if message.offset > tp[message.offset()]:
-                tp[message.partition].append(
-                    TopicPartition(
-                        topic=message.topic(),
-                        partition=message.partition(),
-                        offset=message.offset(),
-                    )
-                )
-        else:
-            tp[message.partition] = TopicPartition(
-                topic=message.topic(),
-                partition=message.partition(),
-                offset=message.offset(),
-            )
-
-    return list(tp.values())
