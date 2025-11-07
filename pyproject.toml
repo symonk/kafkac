@@ -43,6 +43,3 @@ exclude = [
 filterwarnings = [
     "ignore::DeprecationWarning:testcontainers"
 ]
-
-[scripts]
-cover = "pytest --cov=src/kafkac --cov-report=term-missing"
