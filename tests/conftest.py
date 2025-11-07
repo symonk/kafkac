@@ -75,6 +75,7 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
             else:
                 # all good, the message was published.
                 ...
+
         try:
             p = Producer(**bootstrap_config)
             for _ in range(count):
@@ -85,6 +86,8 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
         except Exception as e:
             raise KafkaException(str(e)) from None
 
-        logger.info(f"produced {count} messages in {time.monotonic() - start} seconds for topic: {topic}")
+        logger.info(
+            f"produced {count} messages in {time.monotonic() - start} seconds for topic: {topic}"
+        )
 
     return simple_producer

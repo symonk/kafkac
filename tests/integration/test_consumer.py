@@ -6,7 +6,6 @@ import pytest
 
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import PartitionResult
-import logging
 
 
 async def successful_test_handler(messages: list[Message]) -> PartitionResult:
@@ -68,6 +67,7 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         config=consumer_config,
         poll_interval=1,
     )
+
     async def stopper():
         await asyncio.sleep(3000)
         consumer.stop()

@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
+# TODO: This uses internal per message commit() calls, that is awfully slow, the RTT is per
+# message, use store_offset and do a single commit per batch!
 class AsyncKafkaConsumer:
     """
     AsyncKafkaConsumer is a fully asynchronously kafka consumer, ready for use
@@ -151,8 +153,11 @@ class AsyncKafkaConsumer:
         user_cfg["enable.auto.offset.store"] = False
         user_cfg.setdefault("stats_cb", stats_cb)
         # TODO: only enforce this if supporting a modern enough broker setup.
-        user_cfg["group.remote.assignor"] = "cooperative-sticky"
-        user_cfg["group.protocol"] = "consumer"
+        # TODO: theres no image for this yet in docker, use classic for now.
+        user_cfg["session.timeout.ms"] = 45000
+        user_cfg["heartbeat.interval.ms"] = 55000
+        # user_cfg["group.remote.assignor"] = "cooperative-sticky"
+        # user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
         user_cfg.setdefault("throttle_cb", throttle_cb)
         return user_cfg
@@ -166,8 +171,8 @@ class AsyncKafkaConsumer:
             )
             await self.consumer.subscribe(
                 topics=self.topics_regexes,
-                on_assign=self._on_assign,
-                on_revoke=self._on_revoke,
+                # TODO: Re-enable when docker tests work with KIP 848 on_assign=self._on_assign,
+                # TODO: Re-enable when docker tests work with KIP 848 on_revoke=self._on_revoke,
                 on_lost=self._on_lost,
             )
             self.running = True
@@ -175,9 +180,17 @@ class AsyncKafkaConsumer:
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
-                messages = [message for message in await self.consumer.consume(
-                    num_messages=self.batch_size, timeout=self.poll_interval
-                ) if message.error() is None]
+                try:
+                    messages = [
+                        message
+                        for message in await self.consumer.consume(
+                            num_messages=self.batch_size, timeout=self.poll_interval
+                        )
+                        if message.error() is None
+                    ]
+                except KafkaError as err:
+                    logger.error(err)
+                    continue
                 if not messages:
                     # Polling the broker for messages timed out without a message.
                     # The topic is possibly low traffic, or the producer may be
@@ -236,7 +249,7 @@ class AsyncKafkaConsumer:
                             [partition_result.highest_committable]
                         )
                         continue
-
+        # TODO: Exception handling.
         except KeyboardInterrupt:
             self.interrupted = True
             while not self.done:
