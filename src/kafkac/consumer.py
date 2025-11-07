@@ -152,7 +152,6 @@ class AsyncKafkaConsumer:
         user_cfg.setdefault("stats_cb", stats_cb)
         # TODO: only enforce this if supporting a modern enough broker setup.
         user_cfg["group.remote.assignor"] = "cooperative-sticky"
-        user_cfg["group.consumer.session.timeout.ms"] = 45000
         user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
         user_cfg.setdefault("throttle_cb", throttle_cb)

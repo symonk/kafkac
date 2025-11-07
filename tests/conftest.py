@@ -3,7 +3,8 @@ import time
 import typing
 
 import pytest
-from confluent_kafka import Producer
+from confluent_kafka import Producer, KafkaException
+from confluent_kafka import KafkaError
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.admin import NewTopic
 from filelock import FileLock
@@ -36,18 +37,19 @@ def test_kafka(
 
 
 @pytest.fixture(scope="function")
-def test_topic(
+def fx_kafka(
     request: pytest.FixtureRequest, test_kafka
 ) -> typing.Generator[
     tuple[dict[str, typing.Any], KafkaContainer, NewTopic], None, None
 ]:
     bootstrap_cfg, kafka = test_kafka
-    topic = getattr(request, "param", NewTopic(request.node.name, DEFAULT_PARTITIONS))
+    topic = getattr(request, "param", NewTopic(request.node.name.replace("[", "_").replace("]", "_"), DEFAULT_PARTITIONS))
     admin = AdminClient(bootstrap_cfg)
     admin.create_topics([topic])
     yield bootstrap_cfg, kafka, topic
 
 
+# TODO: Mangling consumer/producer configs (group.id) etc which are ignored, tidy it up!
 @pytest.fixture(scope="function")
 def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], None]:
     def simple_producer(
@@ -59,19 +61,23 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
         start = time.monotonic()
         logger.info(f"producing {count} messages")
 
-        def delivery_callback(err, msg):
+        def delivery_callback(err: KafkaError, msg):
             if err:
-                raise Exception("test producer failed publishing") from err
+                raise Exception(f"failed publishing because: {err}")
             else:
                 # all good, the message was published.
                 ...
 
-        p = Producer(**bootstrap_config)
-        for _ in range(count):
-            rand = f'"message": "{time.time_ns()}"'
-            p.produce(topic, rand, callback=delivery_callback)
-            p.poll(0)
-        p.flush()
+        try:
+            p = Producer(**bootstrap_config)
+            for _ in range(count):
+                rand = f'"message": "{time.time_ns()}"'
+                p.produce(topic, rand, callback=delivery_callback)
+                p.poll(0)
+            p.flush()
+        except Exception as e:
+            raise KafkaException(str(e)) from None
+
         logger.info(f"producing {count} messages in {time.monotonic() - start} seconds")
 
     return simple_producer

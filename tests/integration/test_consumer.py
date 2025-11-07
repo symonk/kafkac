@@ -46,8 +46,8 @@ async def test_consumer_handles_rebalancing_gracefully() -> None: ...
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run", range(3))
-async def test_simple_container(run, test_topic, message_producer) -> None:
-    bootstrap_config, container, topic = test_topic
+async def test_simple_container(run, fx_kafka, message_producer) -> None:
+    bootstrap_config, container, topic = fx_kafka
     message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
     bootstrap_config["group.id"] = "basic-test"
     consumer_config = {
