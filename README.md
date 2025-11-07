@@ -43,22 +43,24 @@ process those messages, writing the messages to another topic, confirming all th
 import asyncio
 
 from kafkac import AsyncKafkaConsumer
-from kafkac import BatchResult
+from kafkac import PartitionResult
 from confluent_kafka import Message
 
-async def handler(messages: list[Message]) -> BatchResult:
-    return BatchResult(success=messages)
+
+async def handler(messages: list[Message]) -> PartitionResult:
+    return PartitionResult(succeeded=messages)
+
 
 async def main():
-    config={
+    config = {
         "group.id": "foo",
         "bootstrap.servers": "localhost:9092",
     },
     async with AsyncKafkaConsumer(
-        handler_func=handler,
-        config=config,
-        topic_regexes=["^topic$"],
-        batch_size=1000,
+            handler_func=handler,
+            config=config,
+            topic_regexes=["^topic$"],
+            batch_size=1000,
     ) as consumer:
         await asyncio.sleep(60)
         await consumer.stop()

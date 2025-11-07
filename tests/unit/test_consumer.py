@@ -23,7 +23,9 @@ def test_missing_group_id_raises_value_error() -> None:
 
 
 def test_invalid_handler_func_raises() -> None:
-    error_message = "type of handler_func must be `MessageHandlerFunc` or `MessagesHandlerFunc`"
+    error_message = (
+        "type of handler_func must be `MessageHandlerFunc` or `MessagesHandlerFunc`"
+    )
     with pytest.raises(InvalidHandlerFunctionException, match=error_message):
         AsyncKafkaConsumer(
             handler_func=None,
