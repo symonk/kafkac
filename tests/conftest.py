@@ -3,8 +3,9 @@ import time
 import typing
 
 import pytest
-from confluent_kafka import Producer, KafkaException
 from confluent_kafka import KafkaError
+from confluent_kafka import KafkaException
+from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.admin import NewTopic
 from filelock import FileLock
@@ -43,7 +44,13 @@ def fx_kafka(
     tuple[dict[str, typing.Any], KafkaContainer, NewTopic], None, None
 ]:
     bootstrap_cfg, kafka = test_kafka
-    topic = getattr(request, "param", NewTopic(request.node.name.replace("[", "_").replace("]", "_"), DEFAULT_PARTITIONS))
+    topic = getattr(
+        request,
+        "param",
+        NewTopic(
+            request.node.name.replace("[", "_").replace("]", "_"), DEFAULT_PARTITIONS
+        ),
+    )
     admin = AdminClient(bootstrap_cfg)
     admin.create_topics([topic])
     yield bootstrap_cfg, kafka, topic

@@ -1,7 +1,7 @@
-from .result import PartitionResult
 from .handler import MessageHandlerFunc
 from .handler import MessagesHandlerFunc
 from .models import GroupedMessages
+from .result import PartitionResult
 
 
 async def worker(
