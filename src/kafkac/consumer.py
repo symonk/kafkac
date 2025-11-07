@@ -17,7 +17,7 @@ from .exception import NoConsumerGroupIdProvidedException
 from .handler import MessageHandlerFunc
 from .handler import MessagesHandlerFunc
 from .models import Batch
-from .worker import processor
+from .worker import worker
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way.
@@ -204,7 +204,7 @@ class AsyncKafkaConsumer:
                 # handler.
                 # TODO: This does not support full batches yet, we need to consider making this configurable.
                 tasks = [
-                    asyncio.create_task(processor(grouped_msgs, self.handler_func))
+                    asyncio.create_task(worker(grouped_msgs, self.handler_func))
                     for grouped_msgs in processed_msgs.messages
                 ]
                 # as the tasks finish, store the successful offsets locally.
