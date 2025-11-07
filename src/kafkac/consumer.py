@@ -227,9 +227,11 @@ class AsyncKafkaConsumer:
                         continue
 
                     # the more complicated scenario, we have partial failures within a single partition
-                    # within the batch.  The `BatchResult` keeps track of the highest offset that was
-                    # successful, so we can just commit this.
+                    # within the batch.  The `PartitionResult` keeps track of the highest offset that was
+                    # successful, so we can just commit that, but only after dead letters were successful
+                    # otherwise message loss can occur.
                     if partition_result.highest_committable is not None:
+                        # TODO: Do dead lettering!
                         await self._commit_messages(
                             [partition_result.highest_committable]
                         )
