@@ -175,9 +175,9 @@ class AsyncKafkaConsumer:
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
-                messages = await self.consumer.consume(
+                messages = [message for message in await self.consumer.consume(
                     num_messages=self.batch_size, timeout=self.poll_interval
-                )
+                ) if message.error() is None]
                 if not messages:
                     # Polling the broker for messages timed out without a message.
                     # The topic is possibly low traffic, or the producer may be

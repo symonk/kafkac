@@ -31,7 +31,8 @@ def test_kafka(
     root_tmp_dir = tmp_path_factory.getbasetemp().parent
     fn = root_tmp_dir / "data.json"
     with FileLock(str(fn) + ".lock"):
-        with KafkaContainer().with_kraft() as kafka:
+        # the default test containers image doesn't support the new protocol for rebalancing!
+        with KafkaContainer(image="confluentinc/cp-kafka:8.1.0").with_kraft() as kafka:
             connection = kafka.get_bootstrap_server()
             bootstrap_cfg = {"bootstrap.servers": connection}
             yield bootstrap_cfg, kafka
@@ -74,7 +75,6 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
             else:
                 # all good, the message was published.
                 ...
-
         try:
             p = Producer(**bootstrap_config)
             for _ in range(count):
@@ -85,6 +85,6 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
         except Exception as e:
             raise KafkaException(str(e)) from None
 
-        logger.info(f"producing {count} messages in {time.monotonic() - start} seconds")
+        logger.info(f"produced {count} messages in {time.monotonic() - start} seconds for topic: {topic}")
 
     return simple_producer

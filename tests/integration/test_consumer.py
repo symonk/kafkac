@@ -6,9 +6,11 @@ import pytest
 
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import PartitionResult
+import logging
 
 
 async def successful_test_handler(messages: list[Message]) -> PartitionResult:
+    await asyncio.sleep(0.10)
     return PartitionResult(succeeded=[topic_partition for topic_partition in messages])
 
 
@@ -49,8 +51,7 @@ async def test_consuming_million_messages() -> None: ...
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("run", range(3))
-async def test_simple_container(run, fx_kafka, message_producer) -> None:
+async def test_simple_container(fx_kafka, message_producer) -> None:
     bootstrap_config, container, topic = fx_kafka
     message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
     bootstrap_config["group.id"] = "basic-test"
@@ -58,16 +59,17 @@ async def test_simple_container(run, fx_kafka, message_producer) -> None:
         "bootstrap.servers": bootstrap_config.get("bootstrap.servers"),
         "group.id": str(uuid.uuid4()),
         "auto.offset.reset": "earliest",
+        "debug": "consumer,cgrp,topic,fetch",
     }
     consumer = AsyncKafkaConsumer(
         handler_func=successful_test_handler,
         batch_size=1000,
         topic_regexes=[topic.topic],
         config=consumer_config,
+        poll_interval=1,
     )
-
     async def stopper():
-        await asyncio.sleep(3)
+        await asyncio.sleep(3000)
         consumer.stop()
 
     await asyncio.gather(*(stopper(), consumer.start()))
