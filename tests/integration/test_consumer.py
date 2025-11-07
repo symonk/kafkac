@@ -43,6 +43,9 @@ async def test_consumer_handles_partial_batch_correctly() -> None: ...
 @pytest.mark.asyncio
 async def test_consumer_handles_rebalancing_gracefully() -> None: ...
 
+@pytest.mark.asyncio
+async def test_consuming_million_messages() -> None:
+    ...
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("run", range(3))
