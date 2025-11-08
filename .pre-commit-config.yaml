@@ -10,7 +10,6 @@ repos:
     - id: check-illegal-windows-names
     - id: check-json
     - id: debug-statements
-    - id: double-quote-string-fixer
     - id: end-of-file-fixer
     - id: name-tests-test
       args: [--pytest-test-first]

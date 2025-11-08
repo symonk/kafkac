@@ -8,7 +8,7 @@ import pytest
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import PartitionResult
 
-from ..utils import get_committed_messages_for_topic
+from ..test_utils import get_committed_messages_for_topic
 
 
 async def successful_test_handler(messages: list[Message]) -> PartitionResult:
