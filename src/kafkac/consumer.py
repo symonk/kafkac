@@ -233,7 +233,7 @@ class AsyncKafkaConsumer:
                 if not filtered_messages:
                     # the entire batch was 'filtered' out by the user.
                     # commit the entire batch and move on.
-                    await self._commit_messages(messages)
+                    await self._store_offsets(messages)
                     continue
 
                 # squash the batch collected results, getting per topic partitions messages
@@ -258,13 +258,13 @@ class AsyncKafkaConsumer:
 
                     # the entire partitions messages were successful, store offsets for all.
                     if partition_result.all_success:
-                        await self._commit_messages(partition_result.succeeded)
+                        await self._store_offsets(partition_result.succeeded)
                         continue
 
                     # the entire partitions messages were dead lettered, store offsets for all.
                     if partition_result.all_dead_lettered:
                         # TODO: Do dead lettering!
-                        await self._commit_messages(partition_result.dead_letter)
+                        await self._store_offsets(partition_result.dead_letter)
                         continue
 
                     # the more complicated scenario, we have partial failures within a single partition
@@ -273,12 +273,13 @@ class AsyncKafkaConsumer:
                     # otherwise message loss can occur.
                     if partition_result.highest_committable is not None:
                         # TODO: Do dead lettering!
-                        await self._commit_messages(
+                        await self._store_offsets(
                             [partition_result.highest_committable]
                         )
                         continue
 
                 logger.info("Batch complete!")
+                await self.consumer.commit(asynchronous=not self.blocking_commit)
                 continue
                 # ignore the below for now, want to benchmark committing vs offset storing + single commit.
                 # then asynchronous commit.
@@ -368,20 +369,15 @@ class AsyncKafkaConsumer:
             return True
         return False
 
-    async def _commit_messages(
+    async def _store_offsets(
         self, messages: list[Message]
-    ) -> None | list[TopicPartition]:
-        """_commit_messages calls commit for each of the messages passed.  This function should
-        only be used in cases where the entire batch is a holistic success."""
-        committed = []
+    ) -> None:
+        """internally store the offsets for successful messages."""
         for message in messages:
-            # TODO: There can be errors here, handle them!
-            committed.append(
-                await typing.cast(AIOConsumer, self.consumer).commit(
-                    message=message, asynchronous=not self.blocking_commit
-                )
-            )
-        return committed
+            try:
+                await typing.cast(AIOConsumer, self.consumer).store_offsets(message=message)
+            except KafkaException as err:
+                logger.error(err)
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
@@ -407,7 +403,7 @@ class AsyncKafkaConsumer:
                 self.assigned_partitions[topic].discard(partition)
 
         # commit anything stored already.
-        await typing.cast(AIOConsumer, self.consumer).commit(asynchronous=False)
+        await typing.cast(AIOConsumer, self.consumer).commit(asynchronous=not self.blocking_commit)
         await typing.cast(AIOConsumer, self.consumer).incremental_unassign(partitions)
 
     async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
