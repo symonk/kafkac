@@ -186,7 +186,6 @@ class AsyncKafkaConsumer:
         # user_cfg["group.remote.assignor"] = "cooperative-sticky"
         # user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
-        user_cfg.setdefault("throttle_cb", throttle_cb)
         # TODO: Allow the env var to specify exactly what to include if set.
         if self.debug:
             user_cfg.setdefault("debug", "consumer,cgrp,topic,fetch")
@@ -470,7 +469,3 @@ class AsyncKafkaConsumer:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await typing.cast(AIOConsumer, self.consumer).close()
         return None
-
-
-async def throttle_cb() -> None:
-    logger.debug("throttle_cb")
