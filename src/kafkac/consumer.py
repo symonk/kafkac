@@ -436,8 +436,6 @@ class AsyncKafkaConsumer:
         """
         batch = Batch()
         for message in messages:
-            if err := message.error():
-                logger.error("message error in the batch: %s", err)
             if self.filter_func is not None:
                 if await self.filter_func(message):
                     batch.store(message)
