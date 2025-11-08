@@ -226,8 +226,7 @@ class AsyncKafkaConsumer:
                     # The topic is possibly low traffic, or the producer may be
                     # slow or having an issue.  No need to sleep here to avoid a hot
                     # CPU loop, the consume call will delay this particular task.
-                    logger.info("empty batch")
-                    await asyncio.sleep(0.1)  # Allow other tasks to run.
+                    await asyncio.sleep(0)  # Allow other tasks to run.
                     continue
 
                 # filtered messages is the grouped messages, as in topic partition
@@ -322,7 +321,7 @@ class AsyncKafkaConsumer:
         except KeyboardInterrupt:
             self.interrupted = True
             while not self.done:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(e)
         finally:
