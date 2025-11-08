@@ -1,7 +1,7 @@
 import pytest
 
 from kafkac import AsyncKafkaConsumer
-from kafkac import InvalidHandlerFunctionException
+from kafkac import InvalidHandlerFunctionException, NoConsumerGroupIdProvidedException
 
 
 class NoOpTestHandler:
@@ -9,17 +9,13 @@ class NoOpTestHandler:
 
 
 def test_missing_group_id_raises_value_error() -> None:
-    with pytest.raises(ValueError) as err:
+    with pytest.raises(NoConsumerGroupIdProvidedException, match="consumer must be assigned a `group.id` in the librdkafka config"):
         AsyncKafkaConsumer(
             handler_func=NoOpTestHandler(),
             batch_size=1,
             topic_regexes=["foo"],
             config={},
         )
-    assert (
-        str(err.value)
-        == "consumer must be assigned a `group.id` in the librdkafka config"
-    )
 
 
 def test_invalid_handler_func_raises() -> None:

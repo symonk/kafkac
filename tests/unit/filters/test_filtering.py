@@ -17,7 +17,7 @@ async def test_without_headers(mocker: MockerFixture) -> None:
     message.headers.return_value = None
     coro = filter_contains_header_fn(message)
     assert not await coro(message)
-    message.assert_called_once()
+    message.headers.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -26,7 +26,7 @@ async def test_filter_contains_header_fn(mocker: MockerFixture):
     message.headers.return_value = [("foo", b"value")]
     coro = filter_contains_header_fn("foo")
     assert await coro(message)
-    message.assert_called_once()
+    message.headers.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -35,4 +35,4 @@ async def test_filter_contains_header_fn_invalid(mocker: MockerFixture):
     message.headers.return_value = [("foo", b"value")]
     coro = filter_contains_header_fn("no")
     assert not await coro(message)
-    message.assert_called_once()
+    message.headers.assert_called_once()
