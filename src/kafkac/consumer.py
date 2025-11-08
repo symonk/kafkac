@@ -33,6 +33,7 @@ DEBUG_OPTS = {
     "cgrp",
     "fetch",
     "topic",
+    "consumer",
 }
 
 
