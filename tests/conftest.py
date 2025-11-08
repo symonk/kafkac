@@ -13,7 +13,7 @@ from testcontainers.kafka import KafkaContainer
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PARTITIONS = 40
+DEFAULT_PARTITIONS = 10
 
 
 @pytest.fixture(scope="session")
@@ -54,6 +54,7 @@ def fx_kafka(
     )
     admin = AdminClient(bootstrap_cfg)
     admin.create_topics([topic])
+    admin.list_topics(topic.topic)
     yield bootstrap_cfg, kafka, topic
 
 
@@ -80,9 +81,11 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
             p = Producer(**bootstrap_config)
             for _ in range(count):
                 rand = f'"message": "{time.time_ns()}"'
-                p.produce(topic, rand, callback=delivery_callback)
-                p.poll(0)
-            p.flush()
+                p.produce(
+                    topic, rand, on_delivery=delivery_callback
+                )  # round robin by default.
+            while p.flush() > 0:
+                time.sleep(0.10)
         except Exception as e:
             raise KafkaException(str(e)) from None
 

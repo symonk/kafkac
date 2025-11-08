@@ -64,11 +64,12 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         batch_size=1000,
         topic_regexes=[topic.topic],
         config=consumer_config,
-        poll_interval=1,
+        poll_interval=0.1,
+        blocking_commit=False,
     )
 
     async def stopper():
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
         consumer.stop()
 
     await asyncio.gather(*(stopper(), consumer.start()))

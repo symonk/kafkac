@@ -1,5 +1,4 @@
-
-
 def test_batch_is_correct_for_multiple_topics_multi_partitions() -> None: ...
+
 
 def test_batch_is_correct_without_messages() -> None: ...

@@ -1,8 +1,8 @@
 import asyncio
-import itertools
 import json
 import logging
 import os
+import time
 import typing
 from collections import defaultdict
 from pprint import pformat
@@ -221,6 +221,7 @@ class AsyncKafkaConsumer:
                     # The topic is possibly low traffic, or the producer may be
                     # slow or having an issue.  No need to sleep here to avoid a hot
                     # CPU loop, the consume call will delay this particular task.
+                    await asyncio.sleep(0)  # Allow other tasks to run.
                     continue
 
                 # filtered messages is the grouped messages, as in topic partition
@@ -235,19 +236,16 @@ class AsyncKafkaConsumer:
                     await self._commit_messages(messages)
                     continue
 
-                # fan out a task that synchronously processes the partitioned messages.
-                # the processor coroutine will invoke the user provided handler func
-                # passing it single messages, or the full batch depending on the configured
-                # handler.
-                # TODO: This does not support full batches yet, we need to consider making this configurable.
-                spawn = sum(len(prtn) for prtn in filtered_messages.result.values())
-                squashed_topic_partitions = itertools.chain.from_iterable(
-                    filtered_messages.result.values()
-                )
-                logger.info("spawning %d tasks", spawn)
+                # squash the batch collected results, getting per topic partitions messages
+                # in each of the list elements.
+                squashed_partitions = [
+                    messages
+                    for partitions in filtered_messages.result.values()
+                    for messages in partitions.values()
+                ]
                 tasks = [
                     asyncio.create_task(batch_worker(partition, self.handler_func))
-                    for partition in squashed_topic_partitions
+                    for partition in squashed_partitions
                 ]
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
@@ -280,6 +278,7 @@ class AsyncKafkaConsumer:
                         )
                         continue
 
+                logger.info("Batch complete!")
                 continue
                 # ignore the below for now, want to benchmark committing vs offset storing + single commit.
                 # then asynchronous commit.
@@ -322,10 +321,15 @@ class AsyncKafkaConsumer:
             while not self.done:
                 await asyncio.sleep(1)
         finally:
+            # TODO: Remove logging, unsubscribing is slow tho...
+            start = time.time()
+            logger.info("Trying to shut down...")
             if self.running:
                 # leave group and commit final offsets.
                 await typing.cast(AIOConsumer, self.consumer).unsubscribe()
                 await typing.cast(AIOConsumer, self.consumer).close()
+                self.done = True
+            logger.info(f"took {time.time() - start} seconds to shutdown")
 
     async def _commit(
         self,
@@ -374,7 +378,7 @@ class AsyncKafkaConsumer:
             # TODO: There can be errors here, handle them!
             committed.append(
                 await typing.cast(AIOConsumer, self.consumer).commit(
-                    message=message, asynchronous=self.blocking_commit
+                    message=message, asynchronous=not self.blocking_commit
                 )
             )
         return committed
