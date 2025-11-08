@@ -1,4 +1,5 @@
 import asyncio
+import itertools
 import json
 import logging
 import os
@@ -19,7 +20,7 @@ from .exception import NoConsumerGroupIdProvidedException
 from .handler import MessageHandlerFunc
 from .handler import MessagesHandlerFunc
 from .models import Batch
-from .worker import worker
+from .worker import batch_worker
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way.
@@ -239,11 +240,14 @@ class AsyncKafkaConsumer:
                 # passing it single messages, or the full batch depending on the configured
                 # handler.
                 # TODO: This does not support full batches yet, we need to consider making this configurable.
-                spawn = sum(len(prtn) for prtn in filtered_messages.result.values()) # TODO: Bug, this should not 1k!
+                spawn = sum(len(prtn) for prtn in filtered_messages.result.values())
+                squashed_topic_partitions = itertools.chain.from_iterable(
+                    filtered_messages.result.values()
+                )
                 logger.info("spawning %d tasks", spawn)
                 tasks = [
-                    asyncio.create_task(worker(grouped_msgs, self.handler_func))
-                    for grouped_msgs in filtered_messages.result.values()
+                    asyncio.create_task(batch_worker(partition, self.handler_func))
+                    for partition in squashed_topic_partitions
                 ]
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):

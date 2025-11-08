@@ -8,6 +8,8 @@ from dataclasses import field
 from confluent_kafka import Message
 
 
+# TODO: This concept needs alot of work, very buggy etc, is sticking all messages and
+# not partitioning properly!
 @dataclass
 class Batch:
     """Batch encapsulates grouped messages across potentially multiple different
