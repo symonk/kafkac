@@ -24,5 +24,3 @@ def generate_offsets_from_kafka_messages(
     offsets = []
     # TODO: Implement and update consumer to utilise it.
     return offsets
-
-    return offsets
