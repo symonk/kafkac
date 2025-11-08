@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import typing
 from collections import defaultdict
 from pprint import pformat
@@ -80,6 +81,7 @@ class AsyncKafkaConsumer:
         dlq_topic: str | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         blocking_commit: bool = True,
+        max_workers: int = min(32, (os.cpu_count() or 1) + 4),
     ) -> None:
         if not isinstance(handler_func, MessageHandlerFunc | MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -124,7 +126,8 @@ class AsyncKafkaConsumer:
         self.dlq_func = dlq_topic
         # how many workers the thread pool can utilise when calling confluent kafka messages
         # that would block the event loop.
-        self.workers = 2  # TODO: Derive this, or make it available to users.
+        # use the internal heuristic from std python, AIOConsumer does not expose it by default.
+        self.workers = max_workers
         # keep track of the partitions assigned to this particular consumer
         # within the group.  Rebalance events can be common, rebalancing
         # is gracefully handled by the internals of the KafkaConsumer.
