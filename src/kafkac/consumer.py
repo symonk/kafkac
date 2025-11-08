@@ -7,6 +7,7 @@ from collections import defaultdict
 from pprint import pformat
 
 from confluent_kafka import KafkaError
+from confluent_kafka import KafkaException
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.experimental.aio import AIOConsumer
@@ -24,6 +25,15 @@ from .worker import worker
 # but not getting in their way.
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+# DEBUG_OPTS allow fine-grained control of librdkafka debugging logs to be
+# emitted to the kafkac logger based on explicit values in the KAFKAC_DEBUG
+# environ variable value.
+DEBUG_OPTS = {
+    "cgrp",
+    "fetch",
+    "topic",
+}
 
 
 # TODO: This uses internal per message commit() calls, that is awfully slow, the RTT is per
@@ -82,6 +92,7 @@ class AsyncKafkaConsumer:
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         blocking_commit: bool = True,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
+        debug: bool = False,
     ) -> None:
         if not isinstance(handler_func, MessageHandlerFunc | MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -93,6 +104,10 @@ class AsyncKafkaConsumer:
             raise NoConsumerGroupIdProvidedException(
                 "consumer must be assigned a `group.id` in the librdkafka config"
             )
+
+        # enable consumer level debugging logging, if explicitly set or `KAFKAC_DEBUG` is
+        # in the environment.
+        self.debug = debug or "KAFKAC_DEBUG" in os.environ
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
         # 1M messages, if higher than this the core library will raise an error on consume(...)
         self.batch_size = min(max(batch_size, 1), 1_000_000)
@@ -145,6 +160,8 @@ class AsyncKafkaConsumer:
         self.blocking_commit = blocking_commit
         # remove this later
         self.done = False
+        # count the number of messages processed.
+        self.statistics = {"succeeded": 0, "dead_lettered": 0}
 
     def _prepare_cfg(
         self,
@@ -163,6 +180,9 @@ class AsyncKafkaConsumer:
         # user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
         user_cfg.setdefault("throttle_cb", throttle_cb)
+        # TODO: Allow the env var to specify exactly what to include if set.
+        if self.debug:
+            user_cfg.setdefault("debug", "consumer,cgrp,topic,fetch")
         return user_cfg
 
     async def start(self) -> None:
@@ -206,8 +226,8 @@ class AsyncKafkaConsumer:
                 # removed.  The (optional) user supplied filter_func is applied to each message
                 # and allows ignoring messages that do not meet the criteria.
                 # by default, no messages are filtered.
-                processed_msgs = await self._prepare_batch(messages)
-                if not processed_msgs:
+                filtered_messages = await self._prepare_batch(messages)
+                if not filtered_messages:
                     # the entire batch was 'filtered' out by the user.
                     # commit the entire batch and move on.
                     await self._commit_messages(messages)
@@ -220,7 +240,7 @@ class AsyncKafkaConsumer:
                 # TODO: This does not support full batches yet, we need to consider making this configurable.
                 tasks = [
                     asyncio.create_task(worker(grouped_msgs, self.handler_func))
-                    for grouped_msgs in processed_msgs.result.values()
+                    for grouped_msgs in filtered_messages.result.values()
                 ]
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
@@ -252,6 +272,39 @@ class AsyncKafkaConsumer:
                             [partition_result.highest_committable]
                         )
                         continue
+                try:
+                    # the entire batch of messages has been handled.  commit the internally stored offsets
+                    # once to amortize the RTT cost to the broker(s).
+                    # The internal loop can store offsets internally at various different points.
+                    # no offsets or messages are required here, instead it will commit anything
+                    # internally stored.
+                    committed_topic_partitions: (
+                        list[TopicPartition] | None
+                    ) = await self.consumer.commit(asynchronous=self.blocking_commit)
+                    if committed_topic_partitions is None:
+                        # There was commit failures.
+                        ...
+                    else:
+                        # Some partitions possibly failed during commit.
+                        # This might be mid re-balance, or broker network/IO errors etc.
+                        # There is not much to be done, get visibility and retry next loop.
+                        # Most errors are handling implicitly by librdkafka.
+                        commit_failures: typing.DefaultDict[str, set[int]] = (
+                            defaultdict(set)
+                        )
+                        for topic_partition in committed_topic_partitions:
+                            if topic_partition.error is not None:
+                                commit_failures[topic_partition.topic].add(
+                                    topic_partition.partition
+                                )
+
+                        logger.error("some partitions failed")
+                        ...
+
+                except KafkaException as err:
+                    logger.error(err)
+                    continue
+
         # TODO: Exception handling.
         except KeyboardInterrupt:
             self.interrupted = True

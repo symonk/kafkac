@@ -21,6 +21,6 @@ def generate_offsets_from_kafka_messages(
 
     :returns: a list of `TopicPartition` objects, ready for storing.
     """
-    offsets = []
+    offsets: list[TopicPartition] = []
     # TODO: Implement and update consumer to utilise it.
     return offsets

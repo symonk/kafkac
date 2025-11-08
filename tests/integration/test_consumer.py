@@ -58,7 +58,6 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         "bootstrap.servers": bootstrap_config.get("bootstrap.servers"),
         "group.id": str(uuid.uuid4()),
         "auto.offset.reset": "earliest",
-        "debug": "consumer,cgrp,topic,fetch",
     }
     consumer = AsyncKafkaConsumer(
         handler_func=successful_test_handler,
@@ -69,7 +68,7 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
     )
 
     async def stopper():
-        await asyncio.sleep(3000)
+        await asyncio.sleep(3)
         consumer.stop()
 
     await asyncio.gather(*(stopper(), consumer.start()))
