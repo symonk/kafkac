@@ -239,6 +239,8 @@ class AsyncKafkaConsumer:
                 # passing it single messages, or the full batch depending on the configured
                 # handler.
                 # TODO: This does not support full batches yet, we need to consider making this configurable.
+                spawn = sum(len(prtn) for prtn in filtered_messages.result.values()) # TODO: Bug, this should not 1k!
+                logger.info("spawning %d tasks", spawn)
                 tasks = [
                     asyncio.create_task(worker(grouped_msgs, self.handler_func))
                     for grouped_msgs in filtered_messages.result.values()
@@ -273,6 +275,10 @@ class AsyncKafkaConsumer:
                             [partition_result.highest_committable]
                         )
                         continue
+
+                continue
+                # ignore the below for now, want to benchmark committing vs offset storing + single commit.
+                # then asynchronous commit.
                 try:
                     # the entire batch of messages has been handled.  commit the internally stored offsets
                     # once to amortize the RTT cost to the broker(s).
