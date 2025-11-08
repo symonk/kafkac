@@ -42,7 +42,7 @@ def test_kafka(
 def fx_kafka(
     request: pytest.FixtureRequest, test_kafka
 ) -> typing.Generator[
-    tuple[dict[str, typing.Any], KafkaContainer, NewTopic], None, None
+    tuple[AdminClient, dict[str, typing.Any], KafkaContainer, NewTopic], None, None
 ]:
     bootstrap_cfg, kafka = test_kafka
     topic = getattr(
@@ -52,10 +52,10 @@ def fx_kafka(
             request.node.name.replace("[", "_").replace("]", "_"), DEFAULT_PARTITIONS
         ),
     )
-    admin = AdminClient(bootstrap_cfg)
-    admin.create_topics([topic])
-    admin.list_topics(topic.topic)
-    yield bootstrap_cfg, kafka, topic
+    admin_client = AdminClient(bootstrap_cfg)
+    admin_client.create_topics([topic])
+    admin_client.list_topics(topic.topic)
+    yield admin_client, bootstrap_cfg, kafka, topic
 
 
 # TODO: Mangling consumer/producer configs (group.id) etc which are ignored, tidy it up!

@@ -1,11 +1,9 @@
 import asyncio
-import json
 import logging
 import os
 import time
 import typing
 from collections import defaultdict
-from pprint import pformat
 
 from confluent_kafka import KafkaError
 from confluent_kafka import KafkaException
@@ -95,6 +93,7 @@ class AsyncKafkaConsumer:
         blocking_commit: bool = True,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
         debug: bool = False,
+        stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
     ) -> None:
         if not isinstance(handler_func, MessageHandlerFunc | MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -124,10 +123,6 @@ class AsyncKafkaConsumer:
         self.interrupted = False
         # the topic regexes that the consumer should subscribe too.
         self.topics_regexes = topic_regexes
-        # The core librdkafka configuration settings.
-        # note: kafkac makes some strong opinions and overrides alot of configuration
-        # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
-        self.librdkafka_config = self._prepare_cfg(config)
         # the timeout to wait while trying to get a batch of messages.  If this timeout is exceeded
         # before the batch is full, a partial batch will be returned and processed.
         self.poll_interval = max(0.1, poll_interval)
@@ -160,10 +155,17 @@ class AsyncKafkaConsumer:
         # commits should be handled asynchronously by the librdkafka background thread.
         # this is non-blocking if set.
         self.blocking_commit = blocking_commit
+        # a stats callback can be provided for now, later this will be overhauled to expose
+        # useful concepts internally.
+        # this should be provided as a tuple, in the form of (interval, callback) where the
+        # client can expect (approximately) the callback to fire every interval.
+        self.stats_callback = stats_callback
         # remove this later
         self.done = False
-        # count the number of messages processed.
-        self.statistics = {"succeeded": 0, "dead_lettered": 0}
+        # The core librdkafka configuration settings.
+        # note: kafkac makes some strong opinions and overrides alot of configuration
+        # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
+        self.librdkafka_config = self._prepare_cfg(config)
 
     def _prepare_cfg(
         self,
@@ -173,7 +175,10 @@ class AsyncKafkaConsumer:
         user_cfg["enable.partition.eof"] = False
         user_cfg["enable.auto.commit"] = False
         user_cfg["enable.auto.offset.store"] = False
-        user_cfg.setdefault("stats_cb", stats_cb)
+        if self.stats_callback:
+            statistics_interval, stats_callback = self.stats_callback
+            user_cfg["statistics.interval.ms"] = statistics_interval
+            user_cfg.setdefault("stats_cb", stats_callback)
         # TODO: only enforce this if supporting a modern enough broker setup.
         # TODO: theres no image for this yet in docker, use classic for now.
         user_cfg["session.timeout.ms"] = 45000
@@ -187,8 +192,8 @@ class AsyncKafkaConsumer:
             user_cfg.setdefault("debug", "consumer,cgrp,topic,fetch")
         return user_cfg
 
-    async def start(self) -> None:
-        """start signals the consumer to actually begin.  This is implicit
+    async def consume(self) -> None:
+        """consume signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
             self.consumer = AIOConsumer(
@@ -221,7 +226,8 @@ class AsyncKafkaConsumer:
                     # The topic is possibly low traffic, or the producer may be
                     # slow or having an issue.  No need to sleep here to avoid a hot
                     # CPU loop, the consume call will delay this particular task.
-                    await asyncio.sleep(0)  # Allow other tasks to run.
+                    logger.info("empty batch")
+                    await asyncio.sleep(0.1)  # Allow other tasks to run.
                     continue
 
                 # filtered messages is the grouped messages, as in topic partition
@@ -236,6 +242,7 @@ class AsyncKafkaConsumer:
                     await self._store_offsets(messages)
                     continue
 
+                logger.info("processing batch...")
                 # squash the batch collected results, getting per topic partitions messages
                 # in each of the list elements.
                 squashed_partitions = [
@@ -278,11 +285,6 @@ class AsyncKafkaConsumer:
                         )
                         continue
 
-                logger.info("Batch complete!")
-                await self.consumer.commit(asynchronous=not self.blocking_commit)
-                continue
-                # ignore the below for now, want to benchmark committing vs offset storing + single commit.
-                # then asynchronous commit.
                 try:
                     # the entire batch of messages has been handled.  commit the internally stored offsets
                     # once to amortize the RTT cost to the broker(s).
@@ -321,6 +323,8 @@ class AsyncKafkaConsumer:
             self.interrupted = True
             while not self.done:
                 await asyncio.sleep(1)
+        except Exception as e:
+            logger.error(e)
         finally:
             # TODO: Remove logging, unsubscribing is slow tho...
             start = time.time()
@@ -369,13 +373,13 @@ class AsyncKafkaConsumer:
             return True
         return False
 
-    async def _store_offsets(
-        self, messages: list[Message]
-    ) -> None:
+    async def _store_offsets(self, messages: list[Message]) -> None:
         """internally store the offsets for successful messages."""
         for message in messages:
             try:
-                await typing.cast(AIOConsumer, self.consumer).store_offsets(message=message)
+                await typing.cast(AIOConsumer, self.consumer).store_offsets(
+                    message=message
+                )
             except KafkaException as err:
                 logger.error(err)
 
@@ -403,7 +407,9 @@ class AsyncKafkaConsumer:
                 self.assigned_partitions[topic].discard(partition)
 
         # commit anything stored already.
-        await typing.cast(AIOConsumer, self.consumer).commit(asynchronous=not self.blocking_commit)
+        await typing.cast(AIOConsumer, self.consumer).commit(
+            asynchronous=not self.blocking_commit
+        )
         await typing.cast(AIOConsumer, self.consumer).incremental_unassign(partitions)
 
     async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
@@ -459,17 +465,12 @@ class AsyncKafkaConsumer:
     async def __aenter__(self) -> typing.Self:
         """__enter__ allows the KafkaConsumer instance to be used as a context
         manager, guaranteeing its graceful exit and teardown."""
-        await self.start()
+        await self.consume()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await typing.cast(AIOConsumer, self.consumer).close()
         return None
-
-
-async def stats_cb(json_str: str) -> None:
-    data = pformat(json.loads(json_str))
-    logger.debug(f"received stats: {data}")
 
 
 async def throttle_cb() -> None:

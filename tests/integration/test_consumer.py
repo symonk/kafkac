@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 from mailbox import Message
 
@@ -6,6 +7,8 @@ import pytest
 
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import PartitionResult
+
+from ..utils import get_committed_messages_for_topic
 
 
 async def successful_test_handler(messages: list[Message]) -> PartitionResult:
@@ -51,25 +54,41 @@ async def test_consuming_million_messages() -> None: ...
 
 @pytest.mark.asyncio
 async def test_simple_container(fx_kafka, message_producer) -> None:
-    bootstrap_config, container, topic = fx_kafka
+    admin_client, bootstrap_config, container, topic = fx_kafka
     message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
-    bootstrap_config["group.id"] = "basic-test"
+    consumer_group_id = "basic-test"
+    bootstrap_config["group.id"] = consumer_group_id
     consumer_config = {
         "bootstrap.servers": bootstrap_config.get("bootstrap.servers"),
         "group.id": str(uuid.uuid4()),
         "auto.offset.reset": "earliest",
     }
+
+    done = False
+
+    def statter(topic: str):
+        async def stats_cb(json_str) -> None:
+            data = json.loads(json_str)
+            handled = await get_committed_messages_for_topic(data, topic)
+            if handled == 5000:
+                nonlocal done
+                done = True
+
+        return stats_cb
+
     consumer = AsyncKafkaConsumer(
         handler_func=successful_test_handler,
         batch_size=1000,
         topic_regexes=[topic.topic],
         config=consumer_config,
         poll_interval=0.1,
-        blocking_commit=False,
+        blocking_commit=True,
+        stats_callback=(100, statter(topic.topic)),
     )
 
-    async def stopper():
-        await asyncio.sleep(1)
+    async def exit_when_successful():
+        while not done:
+            await asyncio.sleep(0.05)
         consumer.stop()
 
-    await asyncio.gather(*(stopper(), consumer.start()))
+    await asyncio.gather(*(exit_when_successful(), consumer.consume()))
