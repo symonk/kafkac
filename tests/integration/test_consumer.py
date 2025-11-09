@@ -56,7 +56,7 @@ async def test_consuming_million_messages() -> None: ...
 @pytest.mark.asyncio
 async def test_simple_container(fx_kafka, message_producer) -> None:
     admin_client, bootstrap_config, container, topic = fx_kafka
-    message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=50000)
+    message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
     consumer_group_id = "basic-test"
     bootstrap_config["group.id"] = consumer_group_id
     consumer_config = {

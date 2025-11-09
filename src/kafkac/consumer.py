@@ -228,6 +228,8 @@ class AsyncKafkaConsumer:
                     await asyncio.sleep(0)  # Allow other tasks to run.
                     continue
 
+                partitions_in_batch = set(m.partition() for m in messages)
+                logger.info("seen partitions: %s", partitions_in_batch)
                 # filtered messages is the grouped messages, as in topic partition
                 # ordered messages where messages that did not pass the filter are
                 # removed.  The (optional) user supplied filter_func is applied to each message
@@ -252,7 +254,6 @@ class AsyncKafkaConsumer:
                     asyncio.create_task(batch_worker(partition, self.handler_func))
                     for partition in squashed_partitions
                 ]
-                logger.info("using %d tasks", len(tasks))
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
                     partition_result = await completed_task

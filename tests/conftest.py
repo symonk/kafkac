@@ -1,4 +1,5 @@
 import logging
+import random
 import time
 import typing
 
@@ -13,7 +14,7 @@ from testcontainers.kafka import KafkaContainer
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PARTITIONS = 10
+DEFAULT_PARTITIONS = 40
 
 
 @pytest.fixture(scope="session")
@@ -82,7 +83,7 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
         try:
             p = Producer(**bootstrap_config)
             # force a meta data refresh
-            p.list_topics(topic=topic)
+            _ = p.list_topics(topic=topic)
             for _ in range(count):
                 rand = f'"message": "{time.time_ns()}"'
                 p.produce(
