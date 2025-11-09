@@ -89,8 +89,7 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
                 p.produce(
                     topic, rand, on_delivery=delivery_callback
                 )  # round robin by default.
-            while p.flush() > 0:
-                time.sleep(0.25)
+                p.flush()
         except Exception as e:
             raise KafkaException(str(e)) from None
 
