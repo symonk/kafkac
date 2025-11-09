@@ -17,7 +17,7 @@ from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
 from .handler import MessageHandlerFunc
 from .handler import MessagesHandlerFunc
-from .models import Batch
+from .models import MessageGrouper
 from .worker import batch_worker
 
 # add a non-intrusive logger, allowing clients to view some useful information
@@ -429,7 +429,7 @@ class AsyncKafkaConsumer:
         used instead."""
         logger.error("received transient error: %s", err)
 
-    async def _prepare_batch(self, messages: list[Message]) -> Batch:
+    async def _prepare_batch(self, messages: list[Message]) -> MessageGrouper:
         """_prepare_batch groups the messages which could span multiple topics into
         their post-filtered lists, retaining order of messages for the individual
         partitions.  The returned batch consists of many `GroupedMessages` which are
@@ -440,7 +440,7 @@ class AsyncKafkaConsumer:
         messages only once, to group them and filter, ready for fanning out to workers
         for processing.
         """
-        batch = Batch()
+        batch = MessageGrouper()
         for message in messages:
             if self.filter_func is not None:
                 if await self.filter_func(message):

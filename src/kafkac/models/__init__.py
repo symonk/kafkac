@@ -1,3 +1,3 @@
-from .batch import Batch
+from .grouper import MessageGrouper
 
-__all__ = (("Batch"),)
+__all__ = ("MessageGrouper",)
