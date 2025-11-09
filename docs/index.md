@@ -8,7 +8,7 @@ configurations and implement a `handler` for processing your messages.
 
 ### ⚙️ Core Features
 
-- ⚡️ Super fast and fully `asynchronous`
+- ⚡️ Super fast and fully `asynchronous`.
 - 🧬 Automatic serialisation of messages, version-aware based on message `version` header if set.
 - 🛡 Robust error handling for stability.
 - 📦 Multi topic, batch consumption.
@@ -18,15 +18,6 @@ configurations and implement a `handler` for processing your messages.
 - 🔁 Automatic retries with customisable behaviour for different errors.
 - 🧘 Automatic rebalance handling, fully supports `KIP-848` (cooperative rebalancing).
 - ✨ Much more...
-
----
-
-### Benchmarks
-
-Below are some benchmarks that preload various levels of messages onto a topic, run a `kafkac` consumer to
-process those messages, writing the messages to another topic, confirming all the messages are accounted for.
-
-// TODO
 
 ---
 
@@ -65,6 +56,15 @@ if __name__ == "__main__":
     asyncio.gather(main())
 
 ```
+
+---
+
+### Benchmarks
+
+Below are some benchmarks that preload various levels of messages onto a topic, run a `kafkac` consumer to
+process those messages, writing the messages to another topic, confirming all the messages are accounted for.
+
+// TODO
 
 ---
 
