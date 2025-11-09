@@ -53,7 +53,9 @@ def fx_kafka(
         ),
     )
     admin_client = AdminClient(bootstrap_cfg)
-    admin_client.create_topics([topic])
+    futures = admin_client.create_topics([topic])
+    for _, f in futures.items():
+        f.result()
     admin_client.list_topics(topic.topic)
     yield admin_client, bootstrap_cfg, kafka, topic
 
@@ -79,13 +81,15 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
 
         try:
             p = Producer(**bootstrap_config)
+            # force a meta data refresh
+            p.list_topics(topic=topic)
             for _ in range(count):
                 rand = f'"message": "{time.time_ns()}"'
                 p.produce(
                     topic, rand, on_delivery=delivery_callback
                 )  # round robin by default.
             while p.flush() > 0:
-                time.sleep(0.10)
+                time.sleep(0.25)
         except Exception as e:
             raise KafkaException(str(e)) from None
 

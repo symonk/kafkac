@@ -252,6 +252,7 @@ class AsyncKafkaConsumer:
                     asyncio.create_task(batch_worker(partition, self.handler_func))
                     for partition in squashed_partitions
                 ]
+                logger.info("using %d tasks", len(tasks))
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
                     partition_result = await completed_task
