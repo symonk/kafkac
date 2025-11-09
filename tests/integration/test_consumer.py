@@ -83,7 +83,6 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         topic_regexes=[topic.topic],
         config=consumer_config,
         poll_interval=0.1,
-        blocking_commit=True,
         stats_callback=(100, statter(topic.topic)),
     )
 

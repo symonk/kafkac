@@ -90,7 +90,7 @@ class AsyncKafkaConsumer:
         filter_func: FilterFunc | None = None,
         dlq_topic: str | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
-        blocking_commit: bool = True,
+        async_commit: bool = False,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
         debug: bool = False,
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
@@ -154,7 +154,7 @@ class AsyncKafkaConsumer:
         self.rebalance_lock = asyncio.Lock()
         # commits should be handled asynchronously by the librdkafka background thread.
         # this is non-blocking if set.
-        self.blocking_commit = blocking_commit
+        self.async_commit = async_commit
         # a stats callback can be provided for now, later this will be overhauled to expose
         # useful concepts internally.
         # this should be provided as a tuple, in the form of (interval, callback) where the
@@ -293,26 +293,24 @@ class AsyncKafkaConsumer:
                     # internally stored.
                     committed_topic_partitions: (
                         list[TopicPartition] | None
-                    ) = await self.consumer.commit(asynchronous=self.blocking_commit)
+                    ) = await self.consumer.commit(asynchronous=self.async_commit)
+                    # Some partitions possibly failed during commit.
+                    # This might be mid re-balance, or broker network/IO errors etc.
+                    # There is not much to be done, get visibility and retry next loop.
+                    # Most errors are handling implicitly by librdkafka.
                     if committed_topic_partitions is None:
-                        # There was commit failures.
-                        ...
-                    else:
-                        # Some partitions possibly failed during commit.
-                        # This might be mid re-balance, or broker network/IO errors etc.
-                        # There is not much to be done, get visibility and retry next loop.
-                        # Most errors are handling implicitly by librdkafka.
-                        commit_failures: typing.DefaultDict[str, set[int]] = (
-                            defaultdict(set)
-                        )
-                        for topic_partition in committed_topic_partitions:
-                            if topic_partition.error is not None:
-                                commit_failures[topic_partition.topic].add(
-                                    topic_partition.partition
-                                )
-
-                        logger.error("some partitions failed")
-                        ...
+                        # async commit, librdkafka thread will commit later - we never really
+                        # use this, TODO: consider removing and enforcing batch is good.
+                        continue
+                    commit_failures: typing.DefaultDict[str, set[int]] = defaultdict(
+                        set
+                    )
+                    for topic_partition in committed_topic_partitions:
+                        if topic_partition.error is not None:
+                            commit_failures[topic_partition.topic].add(
+                                topic_partition.partition
+                            )
+                            logger.error("partition failed: %s", topic_partition.topic)
 
                 except KafkaException as err:
                     logger.error(err)
@@ -408,7 +406,7 @@ class AsyncKafkaConsumer:
 
         # commit anything stored already.
         await typing.cast(AIOConsumer, self.consumer).commit(
-            asynchronous=not self.blocking_commit
+            asynchronous=self.async_commit
         )
         await typing.cast(AIOConsumer, self.consumer).incremental_unassign(partitions)
 
