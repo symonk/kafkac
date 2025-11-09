@@ -1,30 +1,23 @@
 ## 🐍 kafkac — A Kafka Consumer framework for python
 
-**kafkac** is a minimal, opinionated framework for building reliable Kafka consumers in Python using the [confluent-kafka](https://github.com/confluentinc/confluent-kafka-python) client.
-It abstracts away the boilerplate of manual offset handling, shutdown coordination, and message deserialization - giving you a clean async interface for consuming messages safely and predictably.
-
-> [!IMPORTANT]
-> kafkac prioritises correctness and speed, in that order, avoiding message loss at all costs.
-
-> [!CAUTION]
-> Always write your consumer to be idempotent.  Guaranteeing you will never see a duplicate message
-> is not trivial.
+`kafkac` is a batteries-included python kafka consumer, built on top of `librdkafka`.  It aims to simplify
+the complexities and edge cases of writing a consumer.  You simply need to plugin some basic `librdkafka`
+configurations and implement a `handler` for processing your messages.
 
 ---
 
 ### ⚙️ Core Features
 
-- ⚡️ Fully asynchronous message consumption
-- 🧬 Version-aware model deserialization (Pydantic)
-- 🛡 Handles common Kafka edge cases and failure scenarios
-- 📦 Batch consumption to reduce RTT and executor overhead
-- 🧾 Header-level message filtering support with out of the box filters
-- 📊 Built-in metrics & OpenTelemetry integration
-- 🧩 Pluggable middleware for pre/post-processing
-- 🪦 Automatic dead-letter queueing for poison-pill messages
-- 🔁 Smart retries with exponential backoff
-- 🧘 Automatic rebalance management
-- ✨ And more...
+- ⚡️ Super fast and fully `asynchronous`
+- 🧬 Automatic serialisation of messages, version-aware based on message `version` header if set.
+- 🛡 Robust error handling for stability.
+- 📦 Multi topic, batch consumption.
+- 🧾 Message header filtering support with baked in common filters.
+- 📊 Event system for useful statistics.
+- 🪦 `Deadlettering` support for blocking messages baked in.
+- 🔁 Automatic retries with customisable behaviour for different errors.
+- 🧘 Automatic rebalance handling, fully supports `KIP-848` (cooperative rebalancing).
+- ✨ Much more...
 
 ---
 
