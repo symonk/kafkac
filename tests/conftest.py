@@ -70,6 +70,7 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
         """simple_producer is a fixture that creates dummy data into kafka
         for testing the AsyncKafkaConsumer downstream."""
         bootstrap_config["message.send.max.retries"] = 1  # catch errors in test faster.
+        bootstrap_config["sticky.partitioning.linger.ms"] = 0 # prevent hot partitions in tests
         start = time.monotonic()
         logger.info(f"producing {count} messages")
 
@@ -89,7 +90,8 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
                 p.produce(
                     topic, rand, on_delivery=delivery_callback
                 )  # round robin by default.
-                p.flush()
+            while p.flush() > 0:
+                time.sleep(0.1)
         except Exception as e:
             raise KafkaException(str(e)) from None
 
