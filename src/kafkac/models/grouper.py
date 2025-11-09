@@ -6,8 +6,8 @@ from collections import defaultdict
 from confluent_kafka import Message
 
 
-class Batch:
-    """Batch encapsulates grouped messages across potentially multiple different
+class MessageGrouper:
+    """MessageGrouper encapsulates grouped messages across potentially multiple different
     topics, where each GroupedMessages within it, is a single partitions messages
     after the (optional) header level filtering has occurred."""
 
