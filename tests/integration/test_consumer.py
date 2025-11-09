@@ -12,7 +12,6 @@ from ..test_utils import get_committed_messages_for_topic
 
 
 async def successful_test_handler(messages: list[Message]) -> PartitionResult:
-    await asyncio.sleep(0.10)
     return PartitionResult(succeeded=[topic_partition for topic_partition in messages])
 
 

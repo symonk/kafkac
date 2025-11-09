@@ -10,4 +10,4 @@ async def batch_worker(
 ) -> PartitionResult:
     """processor is responsible for processing messages received by the consumer
     for individual partitions."""
-    return PartitionResult(succeeded=messages)
+    return await handler(messages)
