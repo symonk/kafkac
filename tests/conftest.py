@@ -1,5 +1,4 @@
 import logging
-import random
 import time
 import typing
 
@@ -70,7 +69,9 @@ def message_producer() -> typing.Callable[[dict[str, typing.Any], str, int], Non
         """simple_producer is a fixture that creates dummy data into kafka
         for testing the AsyncKafkaConsumer downstream."""
         bootstrap_config["message.send.max.retries"] = 1  # catch errors in test faster.
-        bootstrap_config["sticky.partitioning.linger.ms"] = 0 # prevent hot partitions in tests
+        bootstrap_config["sticky.partitioning.linger.ms"] = (
+            0  # prevent hot partitions in tests
+        )
         start = time.monotonic()
         logger.info(f"producing {count} messages")
 
