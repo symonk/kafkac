@@ -420,7 +420,7 @@ class AsyncKafkaConsumer:
                 self.assigned_partitions[topic].discard(partition)
 
     @staticmethod
-    async def error_cb(err: KafkaError) -> None:
+    def error_cb(err: KafkaError) -> None:
         """error_cb is the default handle for global errors.  Importantly these
         errors are pretty much informative and no real action should need to be
         taken.  If the user does not specify one in their config, this will be
