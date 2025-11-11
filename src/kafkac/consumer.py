@@ -299,8 +299,6 @@ class AsyncKafkaConsumer:
                     # There is not much to be done, get visibility and retry next loop.
                     # Most errors are handling implicitly by librdkafka.
                     if committed_topic_partitions is None:
-                        # async commit, librdkafka thread will commit later - we never really
-                        # use this, TODO: consider removing and enforcing batch is good.
                         continue
                     commit_failures: typing.DefaultDict[str, set[int]] = defaultdict(
                         set
