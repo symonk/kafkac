@@ -1,3 +1,8 @@
+name: "Kafkac Testing"
+on:
+  push:
+    branches:
+      - "main"
 jobs:
   build:
     name: continuous-integration
