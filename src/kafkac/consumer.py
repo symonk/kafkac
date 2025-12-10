@@ -177,8 +177,8 @@ class AsyncKafkaConsumer:
             statistics_interval, stats_callback = self.stats_callback
             user_cfg["statistics.interval.ms"] = statistics_interval
             user_cfg.setdefault("stats_cb", stats_callback)
-        # TODO: only enforce this if supporting a modern enough broker setup.
-        # TODO: theres no image for this yet in docker, use classic for now.
+        user_cfg["log_cb"] = self.consumer_logger
+        # TODO: Tests are skipped, docker image isnt supporting KIP 848.
         user_cfg["group.consumer.session.timeout.ms"] = 60000
         user_cfg["group.consumer.heartbeat.interval.ms"] = 5000
         user_cfg["group.remote.assignor"] = "uniform"
