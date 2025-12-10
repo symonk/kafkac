@@ -78,11 +78,6 @@ debug logs to be routed to your handler and you can do with them what you see fi
 
 ---
 
-
-
-
----
-
 ### Benchmarks
 
 Below are some benchmarks that preload various levels of messages onto a topic, run a `kafkac` consumer to
