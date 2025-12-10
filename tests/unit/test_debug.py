@@ -20,3 +20,7 @@ def test_only_includes_valid_options_trimmed() -> None:
     assert "cgrp" in output
     assert "topic" in output
     assert "fetch" in output
+
+
+def test_returns_empty_string_for_none() -> None:
+    assert parse_debug_options(None) == ""

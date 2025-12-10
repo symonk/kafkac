@@ -9,7 +9,7 @@ DEBUG_OPTS = {
 }
 
 
-def parse_debug_options(comma_separated_opts: str) -> str:
+def parse_debug_options(comma_separated_opts: str | None) -> str:
     """parse_debug_options attempts to read a
     comma separated string of consumer debug options from the
     run time environment.
@@ -19,6 +19,8 @@ def parse_debug_options(comma_separated_opts: str) -> str:
 
     :returns: A comma separated string of consumer debug options.
     """
+    if comma_separated_opts is None:
+        return ""
     provided = {option.lower().strip() for option in comma_separated_opts.split(",")}
     common = provided & DEBUG_OPTS
     return ",".join(common)
