@@ -166,6 +166,10 @@ class AsyncKafkaConsumer:
         # note: kafkac makes some strong opinions and overrides alot of configuration
         # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
         self.librdkafka_config = self._prepare_cfg(config)
+        # A user defined logger, used for routing global error messages and informative messages
+        # if specified.  If provided, various callbacks will be registered and the logger will be
+        # used as the output for those messages.
+        self.logger = logger
 
     def _prepare_cfg(
         self,
@@ -181,10 +185,10 @@ class AsyncKafkaConsumer:
             user_cfg.setdefault("stats_cb", stats_callback)
         # TODO: only enforce this if supporting a modern enough broker setup.
         # TODO: theres no image for this yet in docker, use classic for now.
-        user_cfg["session.timeout.ms"] = 45000
-        user_cfg["heartbeat.interval.ms"] = 55000
-        # user_cfg["group.remote.assignor"] = "cooperative-sticky"
-        # user_cfg["group.protocol"] = "consumer"
+        user_cfg["group.consumer.session.timeout.ms"] = 60000
+        user_cfg["group.consumer.heartbeat.interval.ms"] = 5000
+        user_cfg["group.remote.assignor"] = "uniform"
+        user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
         # TODO: Allow the env var to specify exactly what to include if set.
         if self.debug:
@@ -201,7 +205,7 @@ class AsyncKafkaConsumer:
             await self.consumer.subscribe(
                 topics=self.topics_regexes,
                 on_assign=self._on_assign,
-                on_
+                on_revoke=self._on_revoke,
                 on_lost=self._on_lost,
             )
             self.running = True
