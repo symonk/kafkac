@@ -62,6 +62,24 @@ if __name__ == "__main__":
 
 ---
 
+### Developer Guide
+
+This section includes the 'must knows' when interacting with the `kafkac` library.
+
+#### Access debug logs:
+
+If you have a need to debug the consumer and access the underlying `librdkafka` debug logs, this can be achieved
+by providing either a coma separated string to `debug="...,..."` when instantiating the async consumer.  The supported options
+for this are: `cgrp,topic,fetch,consumer`.  Alternatively, if `KAFKA_CONFIG` contains a comma separated string of some or more
+of these values, kafkac will parse it.  Priority is given to the specified `debug=""` string if provided.
+
+---
+
+
+
+
+---
+
 ### Benchmarks
 
 Below are some benchmarks that preload various levels of messages onto a topic, run a `kafkac` consumer to
