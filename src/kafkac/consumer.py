@@ -200,8 +200,8 @@ class AsyncKafkaConsumer:
             )
             await self.consumer.subscribe(
                 topics=self.topics_regexes,
-                # TODO: Re-enable when docker tests work with KIP 848 on_assign=self._on_assign,
-                # TODO: Re-enable when docker tests work with KIP 848 on_revoke=self._on_revoke,
+                on_assign=self._on_assign,
+                on_
                 on_lost=self._on_lost,
             )
             self.running = True
@@ -217,7 +217,7 @@ class AsyncKafkaConsumer:
                         )
                         if message.error() is None
                     ]
-                except KafkaError as err:
+                except KafkaException as err:
                     logger.error(err)
                     continue
                 if not messages:
@@ -225,11 +225,8 @@ class AsyncKafkaConsumer:
                     # The topic is possibly low traffic, or the producer may be
                     # slow or having an issue.  No need to sleep here to avoid a hot
                     # CPU loop, the consume call will delay this particular task.
-                    await asyncio.sleep(0)  # Allow other tasks to run.
                     continue
 
-                partitions_in_batch = set(m.partition() for m in messages)
-                logger.info("seen partitions: %s", partitions_in_batch)
                 # filtered messages is the grouped messages, as in topic partition
                 # ordered messages where messages that did not pass the filter are
                 # removed.  The (optional) user supplied filter_func is applied to each message
@@ -242,7 +239,6 @@ class AsyncKafkaConsumer:
                     await self._store_offsets(messages)
                     continue
 
-                logger.info("processing batch...")
                 # squash the batch collected results, getting per topic partitions messages
                 # in each of the list elements.
                 squashed_partitions = [

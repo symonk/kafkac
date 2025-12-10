@@ -1,3 +1,6 @@
+> [!IMPORTANT]  
+> `Kafkac` only supports kafka broker version `4.0.0+`
+
 ## 🐍 kafkac — A Kafka Consumer framework for python
 
 `kafkac` is a batteries-included python kafka consumer, built on top of `librdkafka`.  It aims to simplify
