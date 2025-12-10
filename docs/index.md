@@ -17,7 +17,7 @@ configurations and implement a `handler` for processing your messages.
 - 📦 Multi topic, batch consumption.
 - 🧾 Message header filtering support with baked in common filters.
 - 📊 Event system for useful statistics.
-- 🪦 `Deadlettering` support for blocking messages baked in.
+- 🪦 `Deadlettering/Retry Queue` support for blocking messages baked in.
 - 🔁 Automatic retries with customisable behaviour for different errors.
 - 🧘 Automatic rebalance handling, fully supports `KIP-848` (cooperative rebalancing).
 - ✨ Much more...
