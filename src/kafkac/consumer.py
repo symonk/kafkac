@@ -20,6 +20,11 @@ from .handler import MessagesHandlerFunc
 from .models import MessageGrouper
 from .worker import batch_worker
 
+# add a non-intrusive logger, allowing clients to view some useful information
+# but not getting in their way if they do not specify their own user_logger.
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
 
 # TODO: This uses internal per message commit() calls, that is awfully slow, the RTT is per
 # message, use store_offset and do a single commit per batch!
@@ -79,7 +84,7 @@ class AsyncKafkaConsumer:
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
         debug: str | None = None,
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
-        logger: logging.Logger | None = None,
+        consumer_logger: logging.Logger = logger,
     ) -> None:
         if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -103,8 +108,6 @@ class AsyncKafkaConsumer:
         # handler_func allows the user to handle their business logic on a batch basis,
         # returning tri-state to the consumer (successes, to be retried, to be dead lettered).
         self.handler_func = handler_func
-        # the core confluent_kafka asynchronous consumer.
-        self.consumer: AIOConsumer | None = None
         # marks the consumer as running when start() is awaited.
         self.running = False
         # signals the consumer has been interrupted or `stop() is awaited.
@@ -154,10 +157,13 @@ class AsyncKafkaConsumer:
         # note: kafkac makes some strong opinions and overrides alot of configuration
         # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
         self.librdkafka_config = self._prepare_cfg(config)
-        # A user defined logger, used for routing global error messages and informative messages
-        # if specified.  If provided, various callbacks will be registered and the logger will be
-        # used as the output for those messages.
-        self.logger = logger
+        # The logger to use.  if the user provides their own logger it will be used, otherwise
+        # the internal kafkac logger will be used.
+        self.consumer_logger = consumer_logger
+        # the core confluent_kafka asynchronous consumer.
+        self.consumer: AIOConsumer = AIOConsumer(
+            consumer_conf=self.librdkafka_config, max_workers=self.workers
+        )
 
     def _prepare_cfg(
         self,
@@ -186,9 +192,6 @@ class AsyncKafkaConsumer:
         """consume signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
-            self.consumer = AIOConsumer(
-                consumer_conf=self.librdkafka_config, max_workers=self.workers
-            )
             await self.consumer.subscribe(
                 topics=self.topics_regexes,
                 on_assign=self._on_assign,
@@ -310,8 +313,8 @@ class AsyncKafkaConsumer:
             start = time.time()
             if self.running:
                 # leave group and commit final offsets.
-                await typing.cast(AIOConsumer, self.consumer).unsubscribe()
-                await typing.cast(AIOConsumer, self.consumer).close()
+                await self.consumer.unsubscribe()
+                await self.consumer.close()
                 self.done = True
 
     async def _commit(
@@ -333,7 +336,7 @@ class AsyncKafkaConsumer:
             if v is not None
         }
 
-        results = await typing.cast(AIOConsumer, self.consumer).commit(**commit_kw)
+        results = await self.consumer.commit(**commit_kw)
 
         # asynchronous commit, a background librdkafka will handle the committing at some point
         # in the future.
@@ -355,9 +358,7 @@ class AsyncKafkaConsumer:
         """internally store the offsets for successful messages."""
         for message in messages:
             try:
-                await typing.cast(AIOConsumer, self.consumer).store_offsets(
-                    message=message
-                )
+                await self.consumer.store_offsets(message=message)
             except KafkaException:
                 ...
 
@@ -367,10 +368,15 @@ class AsyncKafkaConsumer:
         """on_assign retrieves the incremental partition updates.  The consumer
         can be multi-topic aware, so we need to keep track of per topic partitions."""
         async with self.rebalance_lock:
+            before = self.assigned_partitions.copy()
             for partition in partitions:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].add(partition)
-        await typing.cast(AIOConsumer, self.consumer).incremental_assign(partitions)
+            self.consumer_logger.debug(
+                "consumer was assigned new partitions",
+                extra={"before": before, "after": self.assigned_partitions},
+            )
+        await self.consumer.incremental_assign(partitions)
 
     async def _on_revoke(
         self, _: AIOConsumer, partitions: list[TopicPartition]
@@ -380,15 +386,18 @@ class AsyncKafkaConsumer:
         any offsets for these partitions to prevent message duplication etc when
         reassigned to another consumer in the group."""
         async with self.rebalance_lock:
+            before = self.assigned_partitions.copy()
             for partition in partitions:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].discard(partition)
+            self.consumer_logger.debug(
+                "consumer had partitions revoked",
+                extra={"before": before, "after": self.assigned_partitions},
+            )
 
         # commit anything stored already.
-        await typing.cast(AIOConsumer, self.consumer).commit(
-            asynchronous=self.async_commit
-        )
-        await typing.cast(AIOConsumer, self.consumer).incremental_unassign(partitions)
+        await self.consumer.commit(asynchronous=self.async_commit)
+        await self.consumer.incremental_unassign(partitions)
 
     async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
         """on_lost is invoked when partitions owned by this particular consumer are considered
@@ -404,7 +413,7 @@ class AsyncKafkaConsumer:
         errors are pretty much informative and no real action should need to be
         taken.  If the user does not specify one in their config, this will be
         used instead."""
-        self.logger.error("received transient error: %s", err)
+        self.consumer_logger.error("received transient error: %s", err)
 
     async def _prepare_batch(self, messages: list[Message]) -> MessageGrouper:
         """_prepare_batch groups the messages which could span multiple topics into
@@ -441,5 +450,5 @@ class AsyncKafkaConsumer:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await typing.cast(AIOConsumer, self.consumer).close()
+        await self.consumer.close()
         return None
