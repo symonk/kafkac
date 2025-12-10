@@ -1,4 +1,4 @@
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > `Kafkac` only supports kafka broker version `4.0.0+`
 
 ## 🐍 kafkac — A Kafka Consumer framework for python

@@ -13,26 +13,12 @@ from confluent_kafka.experimental.aio import AIOConsumer
 
 from kafkac.filters.filter import FilterFunc
 
+from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
 from .handler import MessagesHandlerFunc
 from .models import MessageGrouper
 from .worker import batch_worker
-
-# add a non-intrusive logger, allowing clients to view some useful information
-# but not getting in their way.
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
-
-# DEBUG_OPTS allow fine-grained control of librdkafka debugging logs to be
-# emitted to the kafkac logger based on explicit values in the KAFKAC_DEBUG
-# environ variable value.
-DEBUG_OPTS = {
-    "cgrp",
-    "fetch",
-    "topic",
-    "consumer",
-}
 
 
 # TODO: This uses internal per message commit() calls, that is awfully slow, the RTT is per
@@ -91,7 +77,7 @@ class AsyncKafkaConsumer:
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         async_commit: bool = False,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
-        debug: bool = False,
+        debug: str | None = None,
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -106,9 +92,11 @@ class AsyncKafkaConsumer:
                 "consumer must be assigned a `group.id` in the librdkafka config"
             )
 
-        # enable consumer level debugging logging, if explicitly set or `KAFKAC_DEBUG` is
-        # in the environment.
-        self.debug = debug or "KAFKAC_DEBUG" in os.environ
+        # enable consumer level debugging, these will also be written to the provided logger
+        # if specified.  Values should be a comma separated list of values, the supported
+        # consumer options are: consumer,cgrp,topic,fetch
+        # WARNING: This can be noisy!
+        self.debug = debug or os.environ.get("KAFKA_CONFIG", "")
         # ensure a positive batch size, while also keeping it below the librdkafka limit of
         # 1M messages, if higher than this the core library will raise an error on consume(...)
         self.batch_size = min(max(batch_size, 1), 1_000_000)
@@ -190,9 +178,8 @@ class AsyncKafkaConsumer:
         user_cfg["group.remote.assignor"] = "uniform"
         user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
-        # TODO: Allow the env var to specify exactly what to include if set.
-        if self.debug:
-            user_cfg.setdefault("debug", "consumer,cgrp,topic,fetch")
+        if options := parse_debug_options(self.debug):
+            user_cfg.setdefault("debug", options)
         return user_cfg
 
     async def consume(self) -> None:
@@ -221,8 +208,7 @@ class AsyncKafkaConsumer:
                         )
                         if message.error() is None
                     ]
-                except KafkaException as err:
-                    logger.error(err)
+                except KafkaException:
                     continue
                 if not messages:
                     # Polling the broker for messages timed out without a message.
@@ -308,10 +294,8 @@ class AsyncKafkaConsumer:
                             commit_failures[topic_partition.topic].add(
                                 topic_partition.partition
                             )
-                            logger.error("partition failed: %s", topic_partition.topic)
 
-                except KafkaException as err:
-                    logger.error(err)
+                except KafkaException:
                     continue
 
         # TODO: Exception handling.
@@ -319,18 +303,16 @@ class AsyncKafkaConsumer:
             self.interrupted = True
             while not self.done:
                 await asyncio.sleep(0.1)
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            ...
         finally:
             # TODO: Remove logging, unsubscribing is slow tho...
             start = time.time()
-            logger.info("Trying to shut down...")
             if self.running:
                 # leave group and commit final offsets.
                 await typing.cast(AIOConsumer, self.consumer).unsubscribe()
                 await typing.cast(AIOConsumer, self.consumer).close()
                 self.done = True
-            logger.info(f"took {time.time() - start} seconds to shutdown")
 
     async def _commit(
         self,
@@ -376,8 +358,8 @@ class AsyncKafkaConsumer:
                 await typing.cast(AIOConsumer, self.consumer).store_offsets(
                     message=message
                 )
-            except KafkaException as err:
-                logger.error(err)
+            except KafkaException:
+                ...
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
@@ -417,13 +399,12 @@ class AsyncKafkaConsumer:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].discard(partition)
 
-    @staticmethod
-    def error_cb(err: KafkaError) -> None:
+    def error_cb(self, err: KafkaError) -> None:
         """error_cb is the default handle for global errors.  Importantly these
         errors are pretty much informative and no real action should need to be
         taken.  If the user does not specify one in their config, this will be
         used instead."""
-        logger.error("received transient error: %s", err)
+        self.logger.error("received transient error: %s", err)
 
     async def _prepare_batch(self, messages: list[Message]) -> MessageGrouper:
         """_prepare_batch groups the messages which could span multiple topics into
@@ -443,12 +424,7 @@ class AsyncKafkaConsumer:
                     batch.store(message)
                 else:
                     # TODO: Register an event system that ca be subscribed too rather than logging.
-                    logger.debug(
-                        "message dropped during filtering: %s:%d:%d",
-                        message.topic,
-                        message.partition,
-                        message.offset,
-                    )
+                    ...
             else:
                 batch.store(message)
         return batch
