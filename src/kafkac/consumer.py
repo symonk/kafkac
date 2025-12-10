@@ -15,7 +15,6 @@ from kafkac.filters.filter import FilterFunc
 
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
-from .handler import MessageHandlerFunc
 from .handler import MessagesHandlerFunc
 from .models import MessageGrouper
 from .worker import batch_worker
@@ -82,7 +81,7 @@ class AsyncKafkaConsumer:
     def __init__(
         self,
         *,
-        handler_func: MessageHandlerFunc | MessagesHandlerFunc,
+        handler_func: MessagesHandlerFunc,
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
@@ -94,8 +93,9 @@ class AsyncKafkaConsumer:
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
         debug: bool = False,
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
+        logger: logging.Logger | None = None,
     ) -> None:
-        if not isinstance(handler_func, MessageHandlerFunc | MessagesHandlerFunc):
+        if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
                 "type of handler_func must be `MessageHandlerFunc` or `MessagesHandlerFunc`"
             )
