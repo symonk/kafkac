@@ -73,6 +73,9 @@ by providing either a coma separated string to `debug="...,..."` when instantiat
 for this are: `cgrp,topic,fetch,consumer`.  Alternatively, if `KAFKA_CONFIG` contains a comma separated string of some or more
 of these values, kafkac will parse it.  Priority is given to the specified `debug=""` string if provided.
 
+Providing a `logger` object when instantiating the async consumer, will cause these
+debug logs to be routed to your handler and you can do with them what you see fit.
+
 ---
 
 
