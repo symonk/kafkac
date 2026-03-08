@@ -17,6 +17,8 @@ from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
 from .handler import MessagesHandlerFunc
 from .models import MessageGrouper
+from .retry import RetryConfig
+from .retry import RetryRouter
 from .worker import batch_worker
 
 # add a non-intrusive logger, allowing clients to view some useful information
@@ -76,7 +78,7 @@ class AsyncKafkaConsumer:
         topic_regexes: list[str],
         poll_interval: float = 0.1,
         filter_func: FilterFunc | None = None,
-        dlq_topic: str | None = None,
+        retry_config: RetryConfig | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         async_commit: bool = False,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
@@ -125,7 +127,7 @@ class AsyncKafkaConsumer:
         self.filter_func = filter_func
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
-        self.dlq_func = dlq_topic
+        self.retrier = RetryRouter(cfg=retry_config) if retry_config else None
         # how many workers the thread pool can utilise when calling confluent kafka messages
         # that would block the event loop.
         # use the internal heuristic from std python, AIOConsumer does not expose it by default.
