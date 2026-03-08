@@ -9,7 +9,7 @@ from confluent_kafka import KafkaError
 from confluent_kafka import KafkaException
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
-from confluent_kafka.experimental.aio import AIOConsumer
+from confluent_kafka.aio import AIOConsumer
 
 from kafkac.filters.filter import FilterFunc
 
