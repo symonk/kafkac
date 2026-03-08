@@ -85,6 +85,7 @@ class AsyncKafkaConsumer:
         debug: str | None = None,
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
         consumer_logger: logging.Logger = logger,
+        exit_on_eof: bool = False,
     ) -> None:
         if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -153,17 +154,21 @@ class AsyncKafkaConsumer:
         self.stats_callback = stats_callback
         # remove this later
         self.done = False
+        # The logger to use.  if the user provides their own logger it will be used, otherwise
+        # the internal kafkac logger will be used.
+        # Note: This must be set before _prepare_cfg is invoked.
+        self.consumer_logger = consumer_logger
         # The core librdkafka configuration settings.
         # note: kafkac makes some strong opinions and overrides alot of configuration
         # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
         self.librdkafka_config = self._prepare_cfg(config)
-        # The logger to use.  if the user provides their own logger it will be used, otherwise
-        # the internal kafkac logger will be used.
-        self.consumer_logger = consumer_logger
         # the core confluent_kafka asynchronous consumer.
         self.consumer: AIOConsumer = AIOConsumer(
             consumer_conf=self.librdkafka_config, max_workers=self.workers
         )
+        # Allow exiting the consumer when the end of a partition/messages is reached.
+        # useful for one-shot style consumers i.e (a run-once DLQ processor).
+        self.exit_on_eof = exit_on_eof
 
     def _prepare_cfg(
         self,
@@ -177,8 +182,9 @@ class AsyncKafkaConsumer:
             statistics_interval, stats_callback = self.stats_callback
             user_cfg["statistics.interval.ms"] = statistics_interval
             user_cfg.setdefault("stats_cb", stats_callback)
-        user_cfg["log_cb"] = self.consumer_logger
-        # TODO: Tests are skipped, docker image isnt supporting KIP 848.
+        if self.consumer_logger:
+            user_cfg["logger"] = self.consumer_logger
+        # TODO: Tests are skipped, docker image isn't supporting KIP 848.
         user_cfg["group.consumer.session.timeout.ms"] = 60000
         user_cfg["group.consumer.heartbeat.interval.ms"] = 5000
         user_cfg["group.remote.assignor"] = "uniform"

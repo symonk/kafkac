@@ -32,6 +32,7 @@ def test_kafka(
     fn = root_tmp_dir / "data.json"
     with FileLock(str(fn) + ".lock"):
         # the default test containers image doesn't support the new protocol for rebalancing!
+        # TODO: Ensure the system has `docker` running, to avoid obscure exceptions during tests
         with KafkaContainer(image="confluentinc/cp-kafka:8.1.0").with_kraft() as kafka:
             connection = kafka.get_bootstrap_server()
             bootstrap_cfg = {"bootstrap.servers": connection}

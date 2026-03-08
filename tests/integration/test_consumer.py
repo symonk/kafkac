@@ -51,9 +51,6 @@ async def test_consumer_handles_rebalancing_gracefully() -> None: ...
 async def test_consuming_million_messages() -> None: ...
 
 
-# TODO: Theres a mismatch in meta data, the created topic has 10 partitions
-# but producer only sees 1 and hot partitioning occurs.
-@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_simple_container(fx_kafka, message_producer) -> None:
     admin_client, bootstrap_config, container, topic = fx_kafka
