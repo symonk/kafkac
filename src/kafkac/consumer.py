@@ -1,7 +1,6 @@
 import asyncio
 import logging
 import os
-import time
 import typing
 from collections import defaultdict
 
@@ -35,8 +34,7 @@ class AsyncKafkaConsumer:
     these are outlined below, but it is worth noting, they are not set in stone
     and are very likely to change as the library evolves:
 
-        * Enforced cooperative sticky rebalancing for incremental updates, preventing
-        a stop-the-world rebalancing scenario.
+        * New generation consumer rebalance consumer, preventing stop-the-world semantics
         * Auto commit is disabled, user code should provide appropriate coroutines for
         handling the logic and should trust the AsyncKafkaConsumer to handle all scenarios
         gracefully, including rebalancing, dead lettering and transient vs non-transient
@@ -158,17 +156,22 @@ class AsyncKafkaConsumer:
         # the internal kafkac logger will be used.
         # Note: This must be set before _prepare_cfg is invoked.
         self.consumer_logger = consumer_logger
+        # Allow exiting the consumer when the end of a partition/messages is reached.
+        # useful for one-shot style consumers i.e (a run-once DLQ processor).
+        self.exit_on_eof = exit_on_eof
+
+        # -- Order is important below here, at least temporarily, do not append attributes until fixed --
+
         # The core librdkafka configuration settings.
         # note: kafkac makes some strong opinions and overrides alot of configuration
         # see: _prepare and https://github.com/confluentinc/librdkafka/blob/master/CONFIGURATION.md
         self.librdkafka_config = self._prepare_cfg(config)
         # the core confluent_kafka asynchronous consumer.
+        # note: this must be instantiated last, since it is blocking and begins
+        # the core loop.
         self.consumer: AIOConsumer = AIOConsumer(
             consumer_conf=self.librdkafka_config, max_workers=self.workers
         )
-        # Allow exiting the consumer when the end of a partition/messages is reached.
-        # useful for one-shot style consumers i.e (a run-once DLQ processor).
-        self.exit_on_eof = exit_on_eof
 
     def _prepare_cfg(
         self,
@@ -185,10 +188,9 @@ class AsyncKafkaConsumer:
             user_cfg.setdefault("stats_cb", stats_callback)
         if self.consumer_logger:
             user_cfg["logger"] = self.consumer_logger
-        # TODO: Tests are skipped, docker image isn't supporting KIP 848.
-        user_cfg["group.consumer.session.timeout.ms"] = 60000
-        user_cfg["group.consumer.heartbeat.interval.ms"] = 5000
-        user_cfg["group.remote.assignor"] = "uniform"
+        # explicitly opt in to the KIP-848 (Next generation consumer)
+        # TODO: We can't enforce this really, it requires broker side config
+        # TODO: Let's make it 'optional', if the user wants to opt in - use it.
         user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
         if options := parse_debug_options(self.debug):
@@ -316,8 +318,6 @@ class AsyncKafkaConsumer:
         except Exception:
             ...
         finally:
-            # TODO: Remove logging, unsubscribing is slow tho...
-            start = time.time()
             if self.running:
                 # leave group and commit final offsets.
                 await self.consumer.unsubscribe()
@@ -403,7 +403,15 @@ class AsyncKafkaConsumer:
             )
 
         # commit anything stored already.
-        await self.consumer.commit(asynchronous=self.async_commit)
+        # try a synchronous commit here, to minimise duplication after rebalances.
+        try:
+            await self.consumer.commit(asynchronous=False)
+        except KafkaException as exc:
+            err: KafkaError = exc.args[0]
+            if err.code() == "-168":
+                # It's possible, rebalances can happen when no messages have actually been stored.
+                # when auto store offsets is off.
+                pass
         await self.consumer.incremental_unassign(partitions)
 
     async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:

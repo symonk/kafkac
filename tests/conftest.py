@@ -17,7 +17,12 @@ DEFAULT_PARTITIONS = 40
 
 
 @pytest.fixture(scope="session")
+def fx_kafka_image() -> str:
+    return "confluentinc/cp-kafka:8.2.0"
+
+@pytest.fixture(scope="session")
 def test_kafka(
+    fx_kafka_image: str,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> typing.Generator[tuple[dict[str, typing.Any], KafkaContainer], None, None]:
     """test_kafka sets up a pytest-xdist aware kafka cluster for testing.
@@ -33,7 +38,7 @@ def test_kafka(
     with FileLock(str(fn) + ".lock"):
         # the default test containers image doesn't support the new protocol for rebalancing!
         # TODO: Ensure the system has `docker` running, to avoid obscure exceptions during tests
-        with KafkaContainer(image="confluentinc/cp-kafka:8.1.0").with_kraft() as kafka:
+        with KafkaContainer(image=fx_kafka_image).with_kraft() as kafka:
             connection = kafka.get_bootstrap_server()
             bootstrap_cfg = {"bootstrap.servers": connection}
             yield bootstrap_cfg, kafka
