@@ -175,7 +175,8 @@ class AsyncKafkaConsumer:
         user_cfg: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """TODO: Document"""
-        user_cfg["enable.partition.eof"] = False
+        if not self.exit_on_eof:
+            user_cfg["enable.partition.eof"] = False
         user_cfg["enable.auto.commit"] = False
         user_cfg["enable.auto.offset.store"] = False
         if self.stats_callback:
