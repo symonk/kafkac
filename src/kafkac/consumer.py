@@ -75,7 +75,7 @@ class AsyncKafkaConsumer:
         self,
         *,
         handler_func: MessagesHandlerFunc,
-        processing_opt: ProcessingOpt = ProcessingOpt.ByTopic,
+        processing_opt: ProcessingOpt = ProcessingOpt.BY_TOPIC,
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
