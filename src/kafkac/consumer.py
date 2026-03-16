@@ -165,7 +165,11 @@ class AsyncKafkaConsumer:
         self.exit_on_eof = exit_on_eof
         # select the asyncio task generating function for the batches based on the user supplied
         # processing opt.  This controls how the tasks are divided.  Supported options are:
-        # by topic, by partition, by message or merged into a single batch.
+        #
+        # by topic -> messages are grouped by (topic)
+        # by partition -> messages are grouped by (topic, partition)
+        # by message -> messages are passed off as list[message] for single messages (max size 1)
+        # merged -> all partitions for all topics are squashed into a single batch
         self.task_generator = _STRATEGY[processing_opt]
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
