@@ -10,12 +10,13 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.aio import AIOConsumer
 
-from kafkac.filters import FilterFunc
 from kafkac.filters import FilterFuncs
 
+from . import ProcessingOpt
 from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
+from .grouping import _STRATEGY
 from .handler import MessagesHandlerFunc
 from .models import MessageGrouper
 from .retry import RetryConfig
@@ -74,6 +75,7 @@ class AsyncKafkaConsumer:
         self,
         *,
         handler_func: MessagesHandlerFunc,
+        processing_opt: ProcessingOpt = ProcessingOpt.ByTopic,
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
@@ -161,6 +163,10 @@ class AsyncKafkaConsumer:
         # Allow exiting the consumer when the end of a partition/messages is reached.
         # useful for one-shot style consumers i.e (a run-once DLQ processor).
         self.exit_on_eof = exit_on_eof
+        # select the asyncio task generating function for the batches based on the user supplied
+        # processing opt.  This controls how the tasks are divided.  Supported options are:
+        # by topic, by partition, by message or merged into a single batch.
+        self.task_generator = _STRATEGY[processing_opt]
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -250,6 +256,8 @@ class AsyncKafkaConsumer:
                     for partitions in filtered_messages.result.values()
                     for messages in partitions.values()
                 ]
+                # TODO: tasks = await self.task_generator - Wire in concept of allowing
+                # the fanning out to be user controlled.
                 tasks = [
                     asyncio.create_task(batch_worker(partition, self.handler_func))
                     for partition in squashed_partitions
