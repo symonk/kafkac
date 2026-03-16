@@ -1,15 +1,45 @@
 import pytest
+from confluent_kafka import Message
 from pytest_mock import MockerFixture
 
+from kafkac.filters import FilterFuncs
 from kafkac.filters import filter_contains_header_fn
 
-"""
-As of 28/10/2025, confluent-kafka does not allow instantiating `Message` objects.
-see: https://github.com/confluentinc/confluent-kafka-python/issues/1535
-This tests with mocks, but ideally it should create messages.  Basic filtering
-integration tests should also be added.
-"""
+# TODO: Stop using mocks for Message objects, this is fixed in a recent upgraded version.
 
+async def always_false(message: Message) -> bool:
+    return False
+
+
+async def always_true(message: Message) -> bool:
+    return True
+
+
+@pytest.mark.asyncio
+async def test_empty_filter_funcs_raises() -> None:
+    with pytest.raises(ValueError, match="cannot use FilterFuncs without filter functions"):
+        FilterFuncs(topics={"foo"}, funcs=[])
+
+@pytest.mark.asyncio
+async def test_filtering_applies_to_topics_correctly() -> None:
+    message = Message(topic="foo", offset=0, partition=0, key=b"bar")
+    funcs =  FilterFuncs(topics={"bar"}, funcs=[always_false])
+    filtered = await funcs.should_discard(message)
+    assert filtered is False
+
+@pytest.mark.asyncio
+async def test_filtering_applies_to_topics_correctly_with_filters() -> None:
+    message = Message(topic="foo", offset=0, partition=0, key=b"bar")
+    funcs = FilterFuncs(topics={"foo"}, funcs=[always_true])
+    filtered = await funcs.should_discard(message)
+    assert filtered is True
+
+@pytest.mark.asyncio
+async def test_filtering_only_applies_to_topics_when_func_returns_true() -> None:
+    message = Message(topic="foo", offset=0, partition=0, key=b"bar")
+    funcs = FilterFuncs(topics={"foo"}, funcs=[always_false, always_false, always_false, always_true])
+    filtered = await funcs.should_discard(message)
+    assert filtered is True
 
 @pytest.mark.asyncio
 async def test_without_headers(mocker: MockerFixture) -> None:

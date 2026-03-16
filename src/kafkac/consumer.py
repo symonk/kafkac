@@ -10,7 +10,8 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.aio import AIOConsumer
 
-from kafkac.filters.filter import FilterFunc
+from kafkac.filters import FilterFunc
+from kafkac.filters import FilterFuncs
 
 from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
@@ -77,7 +78,7 @@ class AsyncKafkaConsumer:
         batch_size: int,
         topic_regexes: list[str],
         poll_interval: float = 0.1,
-        filter_func: FilterFunc | None = None,
+        filter_funcs: FilterFuncs | None = None,
         retry_config: RetryConfig | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         async_commit: bool = False,
@@ -118,13 +119,12 @@ class AsyncKafkaConsumer:
         # the timeout to wait while trying to get a batch of messages.  If this timeout is exceeded
         # before the batch is full, a partial batch will be returned and processed.
         self.poll_interval = max(0.1, poll_interval)
-        # an (optional) awaitable that is invoked for each message received.  If specified only messages
-        # that return `True` will be processed by the consumer.  Returning `False` for a message will
-        # cause the offset to be stored and ignored, future polls to the message buffer will move on
-        # without processing.
-        # Note: for multiple cases, build a wrapped composite function.
-        # TODO: Probably need per topic filtering, or regex based options!
-        self.filter_func = filter_func
+        # An (optional) topic specific list of filter funcs.  Filter funcs allow inspecting
+        # kafka headers to discard messages without full deserialisation of the body which
+        # is often costly.  At present regex on topics is not an option and topics are exactly
+        # matched.  filter funcs should be provided as a list of `FilterFunc` and these are
+        # executed in FIFO order for the topic.
+        self.filter_funcs = filter_funcs
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
         self.retrier = RetryRouter(cfg=retry_config) if retry_config else None
@@ -445,12 +445,9 @@ class AsyncKafkaConsumer:
         """
         batch = MessageGrouper()
         for message in messages:
-            if self.filter_func is not None:
-                if await self.filter_func(message):
+            if self.filter_funcs is not None:
+                if not await self.filter_funcs.should_discard(message):
                     batch.store(message)
-                else:
-                    # TODO: Register an event system that ca be subscribed too rather than logging.
-                    ...
             else:
                 batch.store(message)
         return batch
