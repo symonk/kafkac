@@ -12,11 +12,11 @@ from confluent_kafka.aio import AIOConsumer
 
 from kafkac.filters import FilterFuncs
 
-from . import ProcessingOpt
 from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
 from .grouping import _STRATEGY
+from .grouping import ProcessingOpt
 from .handler import MessagesHandlerFunc
 from .models import MessageGrouper
 from .retry import RetryConfig
