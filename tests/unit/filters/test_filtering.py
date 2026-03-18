@@ -24,22 +24,22 @@ async def test_empty_filter_funcs_raises() -> None:
 async def test_filtering_applies_to_topics_correctly() -> None:
     message = Message(topic="foo", offset=0, partition=0, key=b"bar")
     funcs =  FilterFuncs(topics={"bar"}, funcs=[always_false])
-    filtered = await funcs.should_discard(message)
-    assert filtered is False
+    filtered = await funcs.discard([message])
+    assert len(filtered) == 0
 
 @pytest.mark.asyncio
 async def test_filtering_applies_to_topics_correctly_with_filters() -> None:
     message = Message(topic="foo", offset=0, partition=0, key=b"bar")
     funcs = FilterFuncs(topics={"foo"}, funcs=[always_true])
-    filtered = await funcs.should_discard(message)
-    assert filtered is True
+    filtered = await funcs.discard([message])
+    assert len(filtered) == 1
 
 @pytest.mark.asyncio
 async def test_filtering_only_applies_to_topics_when_func_returns_true() -> None:
     message = Message(topic="foo", offset=0, partition=0, key=b"bar")
     funcs = FilterFuncs(topics={"foo"}, funcs=[always_false, always_false, always_false, always_true])
-    filtered = await funcs.should_discard(message)
-    assert filtered is True
+    filtered = await funcs.discard([message])
+    assert len(filtered) == 1
 
 @pytest.mark.asyncio
 async def test_without_headers(mocker: MockerFixture) -> None:

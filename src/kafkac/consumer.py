@@ -18,7 +18,6 @@ from .exception import NoConsumerGroupIdProvidedException
 from .grouping import _STRATEGY
 from .grouping import ProcessingOpt
 from .handler import MessagesHandlerFunc
-from .models import MessageGrouper
 from .retry import RetryConfig
 from .retry import RetryRouter
 from .worker import batch_worker
@@ -170,7 +169,7 @@ class AsyncKafkaConsumer:
         # by partition -> messages are grouped by (topic, partition)
         # by message -> messages are passed off as list[message] for single messages (max size 1)
         # merged -> all partitions for all topics are squashed into a single batch
-        self.task_generator = _STRATEGY[processing_opt]
+        self.message_grouper_func = _STRATEGY[processing_opt]
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -246,25 +245,27 @@ class AsyncKafkaConsumer:
                 # removed.  The (optional) user supplied filter_func is applied to each message
                 # and allows ignoring messages that do not meet the criteria.
                 # by default, no messages are filtered.
-                filtered_messages = await self._prepare_batch(messages)
+                filtered_messages = self.filter_funcs.discard(messages) if self.filter_funcs else messages
                 if not filtered_messages:
                     # the entire batch was 'filtered' out by the user.
-                    # commit the entire batch and move on.
+                    # safe to store and commit all before continuing.
                     await self._store_offsets(messages)
+                    # TODO: commit all.
                     continue
 
-                # squash the batch collected results, getting per topic partitions messages
-                # in each of the list elements.
-                squashed_partitions = [
-                    messages
-                    for partitions in filtered_messages.result.values()
-                    for messages in partitions.values()
-                ]
-                # TODO: tasks = await self.task_generator - Wire in concept of allowing
-                # the fanning out to be user controlled.
+                # based on the user provided `processing_opt`, messages are split into differing
+                # buckets.  The supported options will cause the following behaviours:
+                # processing opt: BY_TOPIC: Messages are grouped at the topic level, 1 async task per topic.
+                # processing opt: BY_PARTITION: Messages are grouped by (topic, partition), 1 async task per combination.
+                # processing opt: MERGED: Messages for all topics & partitions are merged to a single async task.
+                # processing opt: BY_MESSAGE: Every message in the batch will fan out an async task.
+                grouped_messages: dict[str, list[Message]] = self.message_grouper_func(messages)
+
+                # tasks have been grouped, create the async tasks based on user level concurrency configuration.
+                # the batch handling can be invoked N number of times, depending on processing options provided.
                 tasks = [
-                    asyncio.create_task(batch_worker(partition, self.handler_func))
-                    for partition in squashed_partitions
+                    asyncio.create_task(batch_worker(messages, self.handler_func))
+                    for messages in grouped_messages.values()
                 ]
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
@@ -330,7 +331,7 @@ class AsyncKafkaConsumer:
             while not self.done:
                 await asyncio.sleep(0.1)
         except Exception:
-            ...
+            raise
         finally:
             if self.running:
                 # leave group and commit final offsets.
@@ -443,26 +444,6 @@ class AsyncKafkaConsumer:
         taken.  If the user does not specify one in their config, this will be
         used instead."""
         self.consumer_logger.error("received transient error: %s", err)
-
-    async def _prepare_batch(self, messages: list[Message]) -> MessageGrouper:
-        """_prepare_batch groups the messages which could span multiple topics into
-        their post-filtered lists, retaining order of messages for the individual
-        partitions.  The returned batch consists of many `GroupedMessages` which are
-        per partition lists for each topic.
-
-        If no filter_func was specified, all messages are included, otherwise messages
-        are ignored that match the users filter criteria.  This allows iterating the batch
-        messages only once, to group them and filter, ready for fanning out to workers
-        for processing.
-        """
-        batch = MessageGrouper()
-        for message in messages:
-            if self.filter_funcs is not None:
-                if not await self.filter_funcs.should_discard(message):
-                    batch.store(message)
-            else:
-                batch.store(message)
-        return batch
 
     def stop(self) -> None:
         """stop signals that the consumer should begin a graceful shutdown.

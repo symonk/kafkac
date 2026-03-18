@@ -29,17 +29,18 @@ class FilterFuncs:
         applicable to the topics registered in this instance."""
         return len(self.topics) > 0 and topic in self.topics
 
-    async def should_discard(self, message: Message) -> bool:
+    async def discard(self, messages: list[Message]) -> list[Message]:
         """should_discard iterates the registered functions for the provided topics
         and if the message should be discarded, signals the consumer to move forward
         ignoring any processing for that particular message."""
-        if not self._applicable(message.topic()):
-            return False
-        for func in self.funcs: # FIFO
-            if await func(message):
-                return True
-        return False
-
+        processable = []
+        for message in messages:
+            if not self._applicable(message.topic()):
+                continue
+            for func in self.funcs: # FIFO
+                if await func(message):
+                    processable.append(message)
+        return processable
 
 def filter_contains_header_fn(name: str) -> FilterFunc:
     """Only includes messages for processing within the fetched batch if

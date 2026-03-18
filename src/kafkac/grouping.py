@@ -1,12 +1,15 @@
 from __future__ import annotations
-import asyncio
+
+from collections import defaultdict
+from collections.abc import Callable
 from enum import StrEnum
 from enum import auto
-from collections.abc import Awaitable, Callable
 
+from confluent_kafka import Message
 from mergedeep import Strategy
 
-_STRATEGY: dict[ProcessingOpt, Callable[..., Awaitable[set[asyncio.Task]]]]  = {}
+# TODO: Is dict right here, list[list[Message]] is probably enough?
+_STRATEGY: dict[ProcessingOpt, Callable[..., dict[str, list[Message]]]]  = {}
 
 
 def register(name: ProcessingOpt):
@@ -31,19 +34,25 @@ class ProcessingOpt(StrEnum):
 
 
 @register(ProcessingOpt.BY_TOPIC)
-async def by_topic() -> set[asyncio.Task]:
-    return set()
+def by_topic(messages: list[Message]) -> dict[str, list[Message]]:
+    result = defaultdict(list)
+    for message in messages:
+        result[message.topic()].append(message)
+    return result
 
 
 @register(ProcessingOpt.BY_PARTITION)
-async def by_partition() -> set[asyncio.Task]:
-    return set()
+def by_partition(messages: list[Message]) -> dict[str, list[Message]]:
+    # TODO: Implement properly
+    return {}
 
 
 @register(ProcessingOpt.MERGED)
-async def merged() -> set[asyncio.Task]:
-    return set()
+def merged(messages: list[Message]) -> dict[str, list[Message]]:
+    # TODO: Implement properly
+    return {}
 
 @register(ProcessingOpt.BY_MESSAGE)
-async def by_message() -> set[asyncio.Task]:
-    return set()
+def by_message(messages: list[Message]) -> dict[str, list[Message]]:
+    # TODO: Implement properly
+    return {}

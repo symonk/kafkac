@@ -6,6 +6,7 @@ from mailbox import Message
 import pytest
 
 from kafkac import AsyncKafkaConsumer
+from kafkac import ProcessingOpt
 from kafkac.handler import PartitionResult
 
 from ..test_utils import get_committed_messages_for_topic
@@ -82,6 +83,7 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         config=consumer_config,
         poll_interval=0.1,
         stats_callback=(100, statter(topic.topic)),
+        processing_opt=ProcessingOpt.BY_TOPIC,
     )
 
     async def exit_when_successful():
