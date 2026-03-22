@@ -12,9 +12,9 @@ from kafkac.handler import HandlerResultContext
 from ..test_utils import get_committed_messages_for_topic
 
 
-async def successful_test_handler(messages: list[Message]) -> HandlerResultContext:
-    return HandlerResultContext(succeeded=[topic_partition for topic_partition in messages])
-
+async def successful_test_handler(ctx: HandlerResultContext, messages: list[Message]) -> HandlerResultContext:
+    ctx.store_successes(messages)
+    return ctx
 
 @pytest.mark.asyncio
 async def test_multiple_topic_regex_subscription_works_correctly() -> None: ...

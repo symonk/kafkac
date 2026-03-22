@@ -13,8 +13,6 @@ class RetryRouter:
         * A retry config
         * Ensure the producer has appropriate access/ACL's to write to the configured topics
     """
-    def __init__(self,
-                 retry_cfg: RetryConfig) -> None:
+
+    def __init__(self, retry_cfg: RetryConfig) -> None:
         self.retry_cfg = retry_cfg
-
-

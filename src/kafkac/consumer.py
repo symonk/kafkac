@@ -20,6 +20,7 @@ from .grouping import ProcessingOpt
 from .handler import MessagesHandlerFunc
 from .retry import RetryConfig
 from .retry import RetryRouter
+from .result import HandlerResultContext
 from .worker import message_processor
 
 # add a non-intrusive logger, allowing clients to view some useful information
@@ -245,7 +246,11 @@ class AsyncKafkaConsumer:
                 # removed.  The (optional) user supplied filter_func is applied to each message
                 # and allows ignoring messages that do not meet the criteria.
                 # by default, no messages are filtered.
-                filtered_messages = self.filter_funcs.discard(messages) if self.filter_funcs else messages
+                filtered_messages = (
+                    self.filter_funcs.discard(messages)
+                    if self.filter_funcs
+                    else messages
+                )
                 if not filtered_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
@@ -259,14 +264,16 @@ class AsyncKafkaConsumer:
                 # processing opt: BY_PARTITION: Messages are grouped by (topic, partition), 1 async task per combination.
                 # processing opt: MERGED: Messages for all topics & partitions are merged to a single async task.
                 # processing opt: BY_MESSAGE: Every message in the batch will fan out an async task.
-                grouped_messages: list[list[Message]] = self.message_grouper_func(messages)
+                grouped_messages: list[list[Message]] = self.message_grouper_func(
+                    messages
+                )
 
                 # tasks have been grouped, create the async tasks based on user level concurrency configuration.
                 # the batch handling can be invoked N number of times, depending on processing options provided.
                 # TODO: If processing_opt is by_message and there are a massive batch size, the overhead is
                 # sizable - think of a simple solution, for now focus on (topic, partition) implementations.
                 tasks = [
-                    asyncio.create_task(message_processor(messages, self.handler_func))
+                    asyncio.create_task(message_processor(HandlerResultContext(), messages, self.handler_func))
                     for messages in grouped_messages
                 ]
                 # as the tasks finish, store the successful offsets locally.

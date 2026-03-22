@@ -4,10 +4,8 @@ from collections import defaultdict
 from collections.abc import Callable
 from enum import StrEnum
 from enum import auto
-from typing import TypeVar
 
 from confluent_kafka import Message
-
 
 ParallelType = list[list[Message]]
 
@@ -17,6 +15,7 @@ class ProcessingOpt(StrEnum):
     what the user supplied batch handler will be invoked with.  These options are directly
     tied to a strategy function that is invoked by the consumer prior to the batch handling
     calls.  This governs the level of asyncio tasks that are generated"""
+
     BY_TOPIC = auto()
     BY_PARTITION = auto()
     MERGED = auto()
@@ -48,6 +47,7 @@ def merged(messages: list[Message]) -> ParallelType:
     """merged returns all messages from all topics and partitions, wrapping
     the input simply in a 1 element length list."""
     return [messages]
+
 
 def by_message(messages: list[Message]) -> ParallelType:
     """by_message creates many lists of size 1, where each message is its own

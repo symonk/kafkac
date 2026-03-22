@@ -24,6 +24,18 @@ class HandlerResultContext:
     blocked: list[Message] = field(default_factory=list)
     dead_letter: list[Message] = field(default_factory=list)
 
+    def store_success(self, message: Message) -> None:
+        self.succeeded.append(message)
+
+    def store_successes(self, messages: list[Message]) -> None:
+        self.succeeded.extend(messages)
+
+    def store_failure(self, message: Message) -> None:
+        self.blocked.append(message)
+
+    def store_failures(self, messages: list[Message]) -> None:
+        self.blocked.extend(messages)
+
     @property
     def all_success(self) -> bool:
         """success indicates if the entire batch was a success without any blocked

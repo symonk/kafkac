@@ -20,6 +20,7 @@ DEFAULT_PARTITIONS = 40
 def fx_kafka_image() -> str:
     return "confluentinc/cp-kafka:8.2.0"
 
+
 @pytest.fixture(scope="session")
 def test_kafka(
     fx_kafka_image: str,

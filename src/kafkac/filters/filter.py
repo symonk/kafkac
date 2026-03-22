@@ -17,6 +17,7 @@ class FilterFuncs:
     the consumer for processing, it should return `False` as part of filtering.  Filtering
     as a concept is around signalling to the consumer that a message should be ignored.
     """
+
     topics: set[str]
     funcs: list[FilterFunc]
 
@@ -37,10 +38,11 @@ class FilterFuncs:
         for message in messages:
             if not self._applicable(message.topic()):
                 continue
-            for func in self.funcs: # FIFO
+            for func in self.funcs:  # FIFO
                 if await func(message):
                     processable.append(message)
         return processable
+
 
 def filter_contains_header_fn(name: str) -> FilterFunc:
     """Only includes messages for processing within the fetched batch if

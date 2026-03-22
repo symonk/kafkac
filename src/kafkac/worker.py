@@ -5,8 +5,10 @@ from .result import HandlerResultContext
 
 
 async def message_processor(
-    messages: list[Message], handler: MessagesHandlerFunc
+    context: HandlerResultContext,
+    messages: list[Message],
+    handler: MessagesHandlerFunc,
 ) -> HandlerResultContext:
     """processor is responsible for processing messages received by the consumer
     for individual partitions."""
-    return await handler(messages)
+    return await handler(context, messages)
