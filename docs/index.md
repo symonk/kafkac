@@ -26,7 +26,7 @@ configurations and implement a `handler` for processing your messages.
 
 ### 🧠 Quick Start
 
-In terms of usability, implementing your own consumer is straight forward, you shoul:
+In terms of usability, implementing your own consumer is straight forward, you should:
 
     1. Build your appropriate `librdkafka` configuration for the consumer.
     2. Decide how you would like your messages delivered to the consumer (ProcessingOpts).
