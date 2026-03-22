@@ -265,7 +265,7 @@ class AsyncKafkaConsumer:
                 # the batch handling can be invoked N number of times, depending on processing options provided.
                 tasks = [
                     asyncio.create_task(batch_worker(messages, self.handler_func))
-                    for messages in grouped_messages.values()
+                    for messages in grouped_messages
                 ]
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
