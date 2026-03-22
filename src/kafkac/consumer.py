@@ -161,8 +161,9 @@ class AsyncKafkaConsumer:
         # Allow exiting the consumer when the end of a partition/messages is reached.
         # useful for one-shot style consumers i.e (a run-once DLQ processor).
         self.exit_on_eof = exit_on_eof
-        # assign the function responsible for returning the dictionary that houses
-        self.message_grouper_func = group_messages_by_topic_partition
+        # assign the function responsible for delegating the kafka messages polled into their
+        # appropriate (topic, partition) combinations.
+        self._message_grouper_func = group_messages_by_topic_partition
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -251,7 +252,7 @@ class AsyncKafkaConsumer:
                     continue
 
                 grouped_messages: dict[tuple[str, int], list[Message]] = (
-                    self.message_grouper_func(messages)
+                    self._message_grouper_func(messages)
                 )
 
                 # tasks are fanned out on a (topic, partition) basis, the user provided handler can do with
