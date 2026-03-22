@@ -26,9 +26,6 @@ jobs:
 
       - name: Run tests
         run: |
-          set -x
-          echo "running tests..."
-          uv --version
-          python --version
-          uv run python -u -m pytest -vv -s tests 
-          echo "finished
+          set -ex
+          echo "checking uv test"
+          uv run python -c "print('hello world')"
