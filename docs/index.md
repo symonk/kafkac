@@ -1,7 +1,7 @@
 > [!CAUTION]
 > Kafkac is NOT production ready, do not use it as such yet.
 
-> > [!IMPORTANT]
+> [!IMPORTANT]
 > `Kafkac` only supports kafka broker version `4.0.0+`
 
 ## 🐍 kafkac — A Kafka Consumer framework for python
