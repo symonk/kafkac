@@ -1,5 +1,5 @@
 from .filter import FilterFunc
-from .filter import FilterFuncs
+from .filter import discard_message
 from .filter import filter_contains_header_fn
 
-__all__ = ("FilterFunc", "filter_contains_header_fn", "FilterFuncs")
+__all__ = ("FilterFunc", "filter_contains_header_fn", "discard_message")

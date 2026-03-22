@@ -1,5 +1,4 @@
 import typing
-from dataclasses import dataclass
 
 from confluent_kafka import Message
 
@@ -7,41 +6,16 @@ from confluent_kafka import Message
 FilterFunc = typing.Callable[[Message], typing.Awaitable[bool]]
 
 
-@dataclass(frozen=True)
-class FilterFuncs:
-    """FilterFuncs is a mechanism to inspect the message prior to including it in batching.
-    This allows messages to be skipped very early without the overhead of deserialisation
-    in cases where a consumer should not concern itself with the message.
-
-    The `FilterFunc` objects contract stipulates, that if a message should be included by
-    the consumer for processing, it should return `False` as part of filtering.  Filtering
-    as a concept is around signalling to the consumer that a message should be ignored.
-    """
-
-    topics: set[str]
-    funcs: list[FilterFunc]
-
-    def __post_init__(self) -> None:
-        if len(self.funcs) == 0:
-            raise ValueError("cannot use FilterFuncs without filter functions")
-
-    def _applicable(self, topic: str) -> bool:
-        """applicable returns in O(1) if the topic of the message is
-        applicable to the topics registered in this instance."""
-        return len(self.topics) > 0 and topic in self.topics
-
-    async def discard(self, messages: list[Message]) -> list[Message]:
-        """should_discard iterates the registered functions for the provided topics
-        and if the message should be discarded, signals the consumer to move forward
-        ignoring any processing for that particular message."""
-        processable = []
-        for message in messages:
-            if not self._applicable(message.topic()):
-                continue
-            for func in self.funcs:  # FIFO
-                if await func(message):
-                    processable.append(message)
-        return processable
+async def discard_message(topic: str, message: Message, filters: list[FilterFunc]) -> bool:
+    """discard_message returns True if the message should be discarded by a
+    filter for messages on a specific topic."""
+    message_topic = message.topic()
+    if message_topic != topic:
+        return False
+    for f in filters:
+        if await f(message):
+            return True
+    return False
 
 
 def filter_contains_header_fn(name: str) -> FilterFunc:

@@ -8,7 +8,7 @@ from confluent_kafka import KafkaException
 from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.admin import NewTopic
-from filelock import FileLock
+from filelock import FileLock, Timeout
 from testcontainers.kafka import KafkaContainer
 
 logger = logging.getLogger(__name__)
@@ -36,13 +36,17 @@ def test_kafka(
     """
     root_tmp_dir = tmp_path_factory.getbasetemp().parent
     fn = root_tmp_dir / "data.json"
-    with FileLock(str(fn) + ".lock"):
-        # the default test containers image doesn't support the new protocol for rebalancing!
-        # TODO: Ensure the system has `docker` running, to avoid obscure exceptions during tests
-        with KafkaContainer(image=fx_kafka_image).with_kraft() as kafka:
-            connection = kafka.get_bootstrap_server()
-            bootstrap_cfg = {"bootstrap.servers": connection}
-            yield bootstrap_cfg, kafka
+    lock = FileLock(str(fn) + ".lock", timeout=5)
+    try:
+        with lock:
+            # the default test containers image doesn't support the new protocol for rebalancing!
+            # TODO: Ensure the system has `docker` running, to avoid obscure exceptions during tests
+            with KafkaContainer(image=fx_kafka_image).with_kraft() as kafka:
+                connection = kafka.get_bootstrap_server()
+                bootstrap_cfg = {"bootstrap.servers": connection}
+                yield bootstrap_cfg, kafka
+    except Timeout:
+        raise pytest.UsageError("lock was not aquired - are you running multiple processes/pytests?")
 
 
 @pytest.fixture(scope="function")

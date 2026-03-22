@@ -54,7 +54,7 @@ class HandlerResultContext:
         return bool(self.dead_letter)
 
     @property
-    def all_transient(self) -> bool:
+    def all_reseek(self) -> bool:
         """all_transient implies all partitions are blocked but not in a fatal enough way
         to dead letter."""
         return (

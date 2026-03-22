@@ -10,7 +10,8 @@ from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.aio import AIOConsumer
 
-from kafkac.filters import FilterFuncs
+from kafkac.filters import FilterFunc
+from kafkac.filters import discard_message
 
 from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
@@ -78,7 +79,7 @@ class AsyncKafkaConsumer:
         batch_size: int,
         topic_regexes: list[str],
         poll_interval: float = 0.1,
-        filter_funcs: FilterFuncs | None = None,
+        filter_funcs: dict[str, list[FilterFunc]] | None = None,
         retry_cfg: RetryConfig | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         async_commit: bool = False,
@@ -234,17 +235,25 @@ class AsyncKafkaConsumer:
                     # CPU loop, the consume call will delay this particular task.
                     continue
 
-                # filtered messages is the grouped messages, as in topic partition
-                # ordered messages where messages that did not pass the filter are
-                # removed.  The (optional) user supplied filter_func is applied to each message
-                # and allows ignoring messages that do not meet the criteria.
-                # by default, no messages are filtered.
-                filtered_messages = (
-                    self.filter_funcs.discard(messages)
-                    if self.filter_funcs
-                    else messages
-                )
-                if not filtered_messages:
+                # apply (optional) user derived filtering, which allows dropping messages
+                # based on kafka headers etc. prior to parsing the full payload.  These
+                # filters skip messages, retaining those that are 'applicable' for further
+                # processing.  Filters are provided on a `per-topic` basis and regex is not
+                # currently supported (yet).
+                applicable_messages = messages if not self.filter_funcs else []
+                if self.filter_funcs:
+                    for message in messages:
+                        topic = message.topic()
+                        awaitables = self.filter_funcs.get(topic)
+                        if not awaitables:
+                            # there are registered 'filters' for this topic
+                            exclude = await discard_message(topic, message, awaitables)
+                            if not exclude:
+                                applicable_messages.append(exclude)
+                        else:
+                            applicable_messages.append(message)
+
+                if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
                     await self._store_offsets(messages)
@@ -252,7 +261,7 @@ class AsyncKafkaConsumer:
                     continue
 
                 grouped_messages: dict[tuple[str, int], list[Message]] = (
-                    self._message_grouper_func(messages)
+                    self._message_grouper_func(applicable_messages)
                 )
 
                 # tasks are fanned out on a (topic, partition) basis, the user provided handler can do with
@@ -277,7 +286,7 @@ class AsyncKafkaConsumer:
 
                     # head of queue blocking (transient) is occurring on the partition.
                     # all the messages will be retried in a future poll.
-                    if partition_result.all_transient:
+                    if partition_result.all_reseek:
                         continue
 
                     # the entire partitions messages were successful, store offsets for all.
@@ -403,7 +412,8 @@ class AsyncKafkaConsumer:
                 "consumer was assigned new partitions",
                 extra={"before": before, "after": self.assigned_partitions},
             )
-        await self.consumer.incremental_assign(partitions)
+        # TODO: incremental assign if KIP-848
+        # await self.consumer.assign(partitions)
 
     async def _on_revoke(
         self, _: AIOConsumer, partitions: list[TopicPartition]
@@ -432,7 +442,8 @@ class AsyncKafkaConsumer:
                 # It's possible, rebalances can happen when no messages have actually been stored.
                 # when auto store offsets is off.
                 pass
-        await self.consumer.incremental_unassign(partitions)
+        # TODO: KIP-848 incremental unassign?
+        # await self.consumer.incremental_unassign(partitions)
 
     async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
         """on_lost is invoked when partitions owned by this particular consumer are considered
