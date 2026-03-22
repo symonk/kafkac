@@ -9,4 +9,6 @@ from .result import HandlerResultContext
 class MessagesHandlerFunc(typing.Protocol):
     """MessagesHandlerFunc handles multiple messages."""
 
-    async def __call__(self, messages: list[Message]) -> HandlerResultContext: ...
+    async def __call__(
+        self, context: HandlerResultContext, messages: list[Message]
+    ) -> HandlerResultContext: ...

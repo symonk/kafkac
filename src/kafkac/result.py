@@ -19,6 +19,7 @@ class HandlerResultContext:
         * dead_letter - Messages that should be forwarded to a dead letter queue.
     """
 
+    topic: str
     highest_committable: Message | None = None
     succeeded: list[Message] = field(default_factory=list)
     blocked: list[Message] = field(default_factory=list)

@@ -15,12 +15,11 @@ from kafkac.filters import FilterFuncs
 from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
-from .grouping import _STRATEGY
-from .grouping import ProcessingOpt
+from .grouping import group_messages_by_topic_partition
 from .handler import MessagesHandlerFunc
+from .result import HandlerResultContext
 from .retry import RetryConfig
 from .retry import RetryRouter
-from .result import HandlerResultContext
 from .worker import message_processor
 
 # add a non-intrusive logger, allowing clients to view some useful information
@@ -75,13 +74,12 @@ class AsyncKafkaConsumer:
         self,
         *,
         handler_func: MessagesHandlerFunc,
-        processing_opt: ProcessingOpt = ProcessingOpt.BY_TOPIC,
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
         poll_interval: float = 0.1,
         filter_funcs: FilterFuncs | None = None,
-        retry_config: RetryConfig | None = None,
+        retry_cfg: RetryConfig | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         async_commit: bool = False,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
@@ -129,7 +127,7 @@ class AsyncKafkaConsumer:
         self.filter_funcs = filter_funcs
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
-        self.retrier = RetryRouter(cfg=retry_config) if retry_config else None
+        self.retrier = RetryRouter(retry_cfg=retry_cfg) if retry_cfg else None
         # how many workers the thread pool can utilise when calling confluent kafka messages
         # that would block the event loop.
         # use the internal heuristic from std python, AIOConsumer does not expose it by default.
@@ -163,14 +161,8 @@ class AsyncKafkaConsumer:
         # Allow exiting the consumer when the end of a partition/messages is reached.
         # useful for one-shot style consumers i.e (a run-once DLQ processor).
         self.exit_on_eof = exit_on_eof
-        # select the asyncio task generating function for the batches based on the user supplied
-        # processing opt.  This controls how the tasks are divided.  Supported options are:
-        #
-        # by topic -> messages are grouped by (topic)
-        # by partition -> messages are grouped by (topic, partition)
-        # by message -> messages are passed off as list[message] for single messages (max size 1)
-        # merged -> all partitions for all topics are squashed into a single batch
-        self.message_grouper_func = _STRATEGY[processing_opt]
+        # assign the function responsible for returning the dictionary that houses
+        self.message_grouper_func = group_messages_by_topic_partition
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -258,26 +250,28 @@ class AsyncKafkaConsumer:
                     # TODO: commit all.
                     continue
 
-                # based on the user provided `processing_opt`, messages are split into differing
-                # buckets.  The supported options will cause the following behaviours:
-                # processing opt: BY_TOPIC: Messages are grouped at the topic level, 1 async task per topic.
-                # processing opt: BY_PARTITION: Messages are grouped by (topic, partition), 1 async task per combination.
-                # processing opt: MERGED: Messages for all topics & partitions are merged to a single async task.
-                # processing opt: BY_MESSAGE: Every message in the batch will fan out an async task.
-                grouped_messages: list[list[Message]] = self.message_grouper_func(
-                    messages
+                grouped_messages: dict[tuple[str, int], list[Message]] = (
+                    self.message_grouper_func(messages)
                 )
 
-                # tasks have been grouped, create the async tasks based on user level concurrency configuration.
-                # the batch handling can be invoked N number of times, depending on processing options provided.
-                # TODO: If processing_opt is by_message and there are a massive batch size, the overhead is
-                # sizable - think of a simple solution, for now focus on (topic, partition) implementations.
-                tasks = [
-                    asyncio.create_task(message_processor(HandlerResultContext(), messages, self.handler_func))
-                    for messages in grouped_messages
-                ]
+                # tasks are fanned out on a (topic, partition) basis, the user provided handler can do with
+                # those what it sees fit, based on the requirements.  Maybe order is not important, but the
+                # handler itself can decide that, alternatively, the handler itself can fan out.
+                tasks = set()
+                for key, partition_messages in grouped_messages.items():
+                    topic = key[0]
+                    ctx = HandlerResultContext(topic=topic)
+                    tasks.add(
+                        asyncio.create_task(
+                            message_processor(
+                                ctx, partition_messages, self.handler_func
+                            )
+                        )
+                    )
+
                 # as the tasks finish, store the successful offsets locally.
                 for completed_task in asyncio.as_completed(tasks):
+                    # TODO: Exc handling
                     partition_result = await completed_task
 
                     # head of queue blocking (transient) is occurring on the partition.

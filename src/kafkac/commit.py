@@ -1,5 +1,4 @@
 from enum import StrEnum
 
 
-class CommitOpt(StrEnum):
-    ...
+class CommitOpt(StrEnum): ...
