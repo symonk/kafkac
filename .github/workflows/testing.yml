@@ -26,6 +26,4 @@ jobs:
 
       - name: Run tests
         run: |
-          set -ex
-          echo "checking uv test"
-          uv run python -c "print('hello world')"
+          uv run pytest -vv --tb=short -ra tests/

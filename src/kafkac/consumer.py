@@ -259,7 +259,7 @@ class AsyncKafkaConsumer:
                 # processing opt: BY_PARTITION: Messages are grouped by (topic, partition), 1 async task per combination.
                 # processing opt: MERGED: Messages for all topics & partitions are merged to a single async task.
                 # processing opt: BY_MESSAGE: Every message in the batch will fan out an async task.
-                grouped_messages: dict[str, list[Message]] = self.message_grouper_func(messages)
+                grouped_messages: list[list[Message]] = self.message_grouper_func(messages)
 
                 # tasks have been grouped, create the async tasks based on user level concurrency configuration.
                 # the batch handling can be invoked N number of times, depending on processing options provided.

@@ -4,22 +4,12 @@ from collections import defaultdict
 from collections.abc import Callable
 from enum import StrEnum
 from enum import auto
+from typing import TypeVar
 
 from confluent_kafka import Message
-from mergedeep import Strategy
-
-# TODO: Is dict right here, list[list[Message]] is probably enough?
-_STRATEGY: dict[ProcessingOpt, Callable[..., dict[str, list[Message]]]]  = {}
 
 
-def register(name: ProcessingOpt):
-    def wrapper(fn: Strategy) -> Strategy:
-        if name in _STRATEGY:
-            raise ValueError(f"strategy already registered for: {name}")
-        _STRATEGY[name] = fn
-        return fn
-    return wrapper
-
+ParallelType = list[list[Message]]
 
 
 class ProcessingOpt(StrEnum):
@@ -33,26 +23,42 @@ class ProcessingOpt(StrEnum):
     BY_MESSAGE = auto()
 
 
-@register(ProcessingOpt.BY_TOPIC)
-def by_topic(messages: list[Message]) -> dict[str, list[Message]]:
+def by_topic(messages: list[Message]) -> ParallelType:
+    """by_topic groups the messages polled from kafka by their topic initially
+    and finally returns a list[list[Message]] where each element within the
+    list is for a unique topic, but all partitions within that topic which
+    are assigned to this consumer."""
     result = defaultdict(list)
     for message in messages:
         result[message.topic()].append(message)
-    return result
+    return [r for r in result.values()]
 
 
-@register(ProcessingOpt.BY_PARTITION)
-def by_partition(messages: list[Message]) -> dict[str, list[Message]]:
-    # TODO: Implement properly
-    return {}
+def by_partition(messages: list[Message]) -> ParallelType:
+    """by_partition groups the messages polled from kafka by their (topic, partition)
+    combinations."""
+    result = defaultdict(list)
+    for message in messages:
+        t, p = message.topic(), message.partition()
+        result[(t, p)].append(message)
+    return [r for r in result.values()]
 
 
-@register(ProcessingOpt.MERGED)
-def merged(messages: list[Message]) -> dict[str, list[Message]]:
-    # TODO: Implement properly
-    return {}
+def merged(messages: list[Message]) -> ParallelType:
+    """merged returns all messages from all topics and partitions, wrapping
+    the input simply in a 1 element length list."""
+    return [messages]
 
-@register(ProcessingOpt.BY_MESSAGE)
-def by_message(messages: list[Message]) -> dict[str, list[Message]]:
-    # TODO: Implement properly
-    return {}
+def by_message(messages: list[Message]) -> ParallelType:
+    """by_message creates many lists of size 1, where each message is its own
+    list."""
+    return [[m] for m in messages]
+
+
+# TODO: Is dict right here, list[list[Message]] is probably enough?
+_STRATEGY: dict[ProcessingOpt, Callable[..., ParallelType]] = {
+    ProcessingOpt.BY_TOPIC: by_topic,
+    ProcessingOpt.BY_PARTITION: by_partition,
+    ProcessingOpt.MERGED: merged,
+    ProcessingOpt.BY_MESSAGE: by_message,
+}
