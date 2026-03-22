@@ -26,6 +26,16 @@ configurations and implement a `handler` for processing your messages.
 
 ### 🧠 Quick Start
 
+In terms of usability, implementing your own consumer is straight forward, you shoul:
+
+    1. Build your appropriate `librdkafka` configuration for the consumer.
+    2. Decide how you would like your messages delivered to the consumer (ProcessingOpts).
+    3. Implement an async handler for those messages.
+    4. Populate success/failure of messages within the handler injected context.
+    5. Decide (Optionally) if you would like retry queue/DLQ and provide a `RetryConfig` for those.
+    6. Kafkac will handle the rest, taking care of all the semantics and edge cases.
+
+
 ```python
 import asyncio
 
@@ -39,12 +49,8 @@ async def handler(messages: list[Message]) -> HandlerResultContext:
 
 
 async def main():
-    config = {
-        "group.id": "foo",
-        "bootstrap.servers": "localhost:9092",
-    },
-    _ = config
-    # TODO!
+    print("implement later")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
