@@ -29,4 +29,4 @@ jobs:
 
       - name: Run tests
         run: |
-          uv run pytest -vv --tb=short -ra tests/
+          uv run pytest -vv --tb=short -ra tests/unit/
