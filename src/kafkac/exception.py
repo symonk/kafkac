@@ -16,3 +16,7 @@ class InvalidHandlerReturnTypeException(KafkacException):
 
 class InvalidHandlerFunctionException(KafkacException):
     """Raised when the client does not provide the appropriate type for processing handler funcs"""
+
+
+class MismatchHandlerContextResultsException(KafkacException):
+    """Raised when the batch handler is sent N number of messages and only stores result data for N-N results"""
