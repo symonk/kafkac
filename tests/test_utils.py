@@ -10,6 +10,6 @@ async def get_committed_messages_for_topic(statistics: dict, topic: str) -> int:
     This allows verifying that the consumer has actually consumed the
     correct number of messages within tests.
     """
-    topics = statistics["topics"][topic]["partitions"]
+    topics = statistics.get("topics", {}).get(topic, {}).get("partitions", {})
     handled = sum(v["committed_offset"] for k, v in topics.items() if k != "-1")
     return handled
