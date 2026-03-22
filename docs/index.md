@@ -30,12 +30,12 @@ configurations and implement a `handler` for processing your messages.
 import asyncio
 
 from kafkac import AsyncKafkaConsumer
-from kafkac import PartitionResult
+from kafkac import HandlerResultContext
 from confluent_kafka import Message
 
 
-async def handler(messages: list[Message]) -> PartitionResult:
-    return PartitionResult(succeeded=messages)
+async def handler(messages: list[Message]) -> HandlerResultContext:
+    return HandlerResultContext(succeeded=messages)
 
 
 async def main():
@@ -43,20 +43,11 @@ async def main():
         "group.id": "foo",
         "bootstrap.servers": "localhost:9092",
     },
-    async with AsyncKafkaConsumer(
-            handler_func=handler,
-            config=config,
-            topic_regexes=["^topic$"],
-            batch_size=1000,
-    ) as consumer:
-        await asyncio.sleep(60)
-        await consumer.stop()
-        # context manager will exit cleanly once the consumer has finalised.
-        # last messages will be processed and handled before graceful exit.
-
+    _ = config
+    # TODO!
 
 if __name__ == "__main__":
-    asyncio.gather(main())
+    asyncio.run(main())
 
 ```
 

@@ -7,13 +7,13 @@ import pytest
 
 from kafkac import AsyncKafkaConsumer
 from kafkac import ProcessingOpt
-from kafkac.handler import PartitionResult
+from kafkac.handler import HandlerResultContext
 
 from ..test_utils import get_committed_messages_for_topic
 
 
-async def successful_test_handler(messages: list[Message]) -> PartitionResult:
-    return PartitionResult(succeeded=[topic_partition for topic_partition in messages])
+async def successful_test_handler(messages: list[Message]) -> HandlerResultContext:
+    return HandlerResultContext(succeeded=[topic_partition for topic_partition in messages])
 
 
 @pytest.mark.asyncio

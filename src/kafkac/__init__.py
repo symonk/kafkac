@@ -5,11 +5,11 @@ from .exception import KafkacException
 from .exception import NoConsumerGroupIdProvidedException
 from .grouping import ProcessingOpt
 from .handler import MessagesHandlerFunc
-from .handler import PartitionResult
+from .handler import HandlerResultContext
 
 __all__ = (
     "AsyncKafkaConsumer",
-    "PartitionResult",
+    "HandlerResultContext",
     "MessagesHandlerFunc",
     "InvalidHandlerFunctionException",
     "InvalidHandlerReturnTypeException",

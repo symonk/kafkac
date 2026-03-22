@@ -20,7 +20,7 @@ from .grouping import ProcessingOpt
 from .handler import MessagesHandlerFunc
 from .retry import RetryConfig
 from .retry import RetryRouter
-from .worker import batch_worker
+from .worker import message_processor
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way if they do not specify their own user_logger.
@@ -263,8 +263,10 @@ class AsyncKafkaConsumer:
 
                 # tasks have been grouped, create the async tasks based on user level concurrency configuration.
                 # the batch handling can be invoked N number of times, depending on processing options provided.
+                # TODO: If processing_opt is by_message and there are a massive batch size, the overhead is
+                # sizable - think of a simple solution, for now focus on (topic, partition) implementations.
                 tasks = [
-                    asyncio.create_task(batch_worker(messages, self.handler_func))
+                    asyncio.create_task(message_processor(messages, self.handler_func))
                     for messages in grouped_messages
                 ]
                 # as the tasks finish, store the successful offsets locally.
@@ -328,6 +330,7 @@ class AsyncKafkaConsumer:
         # TODO: Exception handling.
         except KeyboardInterrupt:
             self.interrupted = True
+            # TODO: Make sure it can't hang forever.
             while not self.done:
                 await asyncio.sleep(0.1)
         except Exception:

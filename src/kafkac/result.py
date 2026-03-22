@@ -5,7 +5,7 @@ from confluent_kafka import Message
 
 
 @dataclass
-class PartitionResult:
+class HandlerResultContext:
     """PartitionResult encapsulates the processing of the messages for a single
     partition within a topic.
 
