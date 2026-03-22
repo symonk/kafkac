@@ -196,7 +196,7 @@ class AsyncKafkaConsumer:
         # explicitly opt in to the KIP-848 (Next generation consumer)
         # TODO: We can't enforce this really, it requires broker side config
         # TODO: Let's make it 'optional', if the user wants to opt in - use it.
-        user_cfg["group.protocol"] = "consumer"
+        # user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
         if options := parse_debug_options(self.debug):
             user_cfg.setdefault("debug", options)
