@@ -29,11 +29,12 @@ configurations and implement a `handler` for processing your messages.
 In terms of usability, implementing your own consumer is straight forward, you should:
 
     1. Build your appropriate `librdkafka` configuration for the consumer.
-    2. Decide how you would like your messages delivered to the consumer (ProcessingOpts).
+    2. Decide how you would like your messages delivered your handler (ProcessingOpts).
     3. Implement an async handler for those messages.
-    4. Populate success/failure of messages within the handler injected context.
-    5. Decide (Optionally) if you would like retry queue/DLQ and provide a `RetryConfig` for those.
-    6. Kafkac will handle the rest, taking care of all the semantics and edge cases.
+    4. Decide how ordering should (or shouldn't be managed)
+    5. Populate success/failure of messages within the handler injected context.
+    6. Decide (Optionally) if you would like retry queue/DLQ and provide a `RetryConfig` for those.
+    7. Kafkac will handle the rest, taking care of all the semantics and edge cases.
 
 
 ```python
