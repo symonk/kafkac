@@ -93,3 +93,8 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         consumer.stop()
 
     await asyncio.gather(*(exit_when_successful(), consumer.consume()))
+
+
+@pytest.mark.asyncio
+async def test_subscribing_error_raises(fx_kafka) -> None:
+    ...

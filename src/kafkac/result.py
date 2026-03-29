@@ -20,6 +20,7 @@ class HandlerResultContext:
     """
 
     topic: str
+    partition: int
     highest_committable: Message | None = None
     succeeded: list[Message] = field(default_factory=list)
     blocked: list[Message] = field(default_factory=list)

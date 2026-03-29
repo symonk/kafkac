@@ -8,7 +8,8 @@ from confluent_kafka import KafkaException
 from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.admin import NewTopic
-from filelock import FileLock, Timeout
+from filelock import FileLock
+from filelock import Timeout
 from testcontainers.kafka import KafkaContainer
 
 logger = logging.getLogger(__name__)

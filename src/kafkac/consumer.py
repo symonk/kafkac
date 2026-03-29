@@ -5,6 +5,7 @@ import typing
 from collections import defaultdict
 
 from confluent_kafka import KafkaError
+from confluent_kafka.error import ConsumeError
 from confluent_kafka import KafkaException
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
@@ -21,7 +22,7 @@ from .handler import MessagesHandlerFunc
 from .result import HandlerResultContext
 from .retry import RetryConfig
 from .retry import RetryRouter
-from .worker import message_processor
+from .worker import message_processor, BatchedWrappedUnhandledException
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way if they do not specify their own user_logger.
@@ -88,6 +89,7 @@ class AsyncKafkaConsumer:
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
         consumer_logger: logging.Logger = logger,
         exit_on_eof: bool = False,
+        bound_concurrency: int = 0,
     ) -> None:
         if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -165,6 +167,11 @@ class AsyncKafkaConsumer:
         # assign the function responsible for delegating the kafka messages polled into their
         # appropriate (topic, partition) combinations.
         self._message_grouper_func = group_messages_by_topic_partition
+        # if the use case has alot of (topic, partitions) and you wish to potentially not overwhelm
+        # downstream systems, setting bound_concurrency will limit (via a semaphore) the number of
+        # (topic, partition) tasks in flight any given time.  By default, the tasks are unbound and
+        # will attempt to execute all in parallel.
+        self.bound_concurrency = bound_concurrency
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -207,14 +214,26 @@ class AsyncKafkaConsumer:
         """consume signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
-            await self.consumer.subscribe(
-                topics=self.topics_regexes,
-                on_assign=self._on_assign,
-                on_revoke=self._on_revoke,
-                on_lost=self._on_lost,
-            )
+            try:
+                await self.consumer.subscribe(
+                    topics=self.topics_regexes,
+                    on_assign=self._on_assign,
+                    on_revoke=self._on_revoke,
+                    on_lost=self._on_lost,
+                )
+            except ConsumeError as exc:
+                self.consumer_logger.exception(exc)
+                raise
+
             self.running = True
             while not self.interrupted:
+                # keep track of partitions that are successful and others which are considered `blocked`.
+                # the term `blocked` in this regard means, something the user wishes to be retried OR
+                # that was configured to be shipped on to a retry or DLQ but failed, resulting in a
+                # reseek.
+                blocked_partitions = {}
+                successful_partitions = {}
+                forwarded_messages = {}
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
@@ -222,11 +241,12 @@ class AsyncKafkaConsumer:
                     messages = [
                         message
                         for message in await self.consumer.consume(
-                            num_messages=self.batch_size, timeout=self.poll_interval
+                            num_messages=self.batch_size, timeout=self.poll_interval,
                         )
                         if message.error() is None
                     ]
-                except KafkaException:
+                except ConsumeError as exc:
+                    self.consumer_logger.exception(exc)
                     continue
                 if not messages:
                     # Polling the broker for messages timed out without a message.
@@ -260,6 +280,9 @@ class AsyncKafkaConsumer:
                     # TODO: commit all.
                     continue
 
+                # group messages into a dictionary of (topic, partition) to guarantee
+                # order, but fan them out asynchronously after.  Order of messages is
+                # retained as we iterate the polled messages in order.
                 grouped_messages: dict[tuple[str, int], list[Message]] = (
                     self._message_grouper_func(applicable_messages)
                 )
@@ -267,49 +290,37 @@ class AsyncKafkaConsumer:
                 # tasks are fanned out on a (topic, partition) basis, the user provided handler can do with
                 # those what it sees fit, based on the requirements.  Maybe order is not important, but the
                 # handler itself can decide that, alternatively, the handler itself can fan out.
-                tasks = set()
+                # TODO: Figure out if we want the user handler to receive the consumer and 'store offsets'?
+                tasks: list[asyncio.Task] =  []  # list as order is important later.
                 for key, partition_messages in grouped_messages.items():
-                    topic = key[0]
-                    ctx = HandlerResultContext(topic=topic)
-                    tasks.add(
+                    topic, partition = key
+                    ctx = HandlerResultContext(topic=topic, partition=partition)
+                    tasks.append(
                         asyncio.create_task(
                             message_processor(
-                                ctx, partition_messages, self.handler_func
+                                ctx, partition_messages, self.handler_func,
                             )
                         )
                     )
 
                 # as the tasks finish, store the successful offsets locally.
-                for completed_task in asyncio.as_completed(tasks):
-                    # TODO: Exc handling
-                    partition_result = await completed_task
-
-                    # head of queue blocking (transient) is occurring on the partition.
-                    # all the messages will be retried in a future poll.
-                    if partition_result.all_reseek:
-                        continue
-
-                    # the entire partitions messages were successful, store offsets for all.
-                    if partition_result.all_success:
-                        await self._store_offsets(partition_result.succeeded)
-                        continue
-
-                    # the entire partitions messages were dead lettered, store offsets for all.
-                    if partition_result.all_dead_lettered:
-                        # TODO: Do dead lettering!
-                        await self._store_offsets(partition_result.dead_letter)
-                        continue
-
-                    # the more complicated scenario, we have partial failures within a single partition
-                    # within the batch.  The `PartitionResult` keeps track of the highest offset that was
-                    # successful, so we can just commit that, but only after dead letters were successful
-                    # otherwise message loss can occur.
-                    if partition_result.highest_committable is not None:
-                        # TODO: Do dead lettering!
-                        await self._store_offsets(
-                            [partition_result.highest_committable]
-                        )
-                        continue
+                # TODO: Allow user controlled semaphore if they have massive (topic, partition) combinations.
+                # TODO: On unhandled exceptions, allow user controlled behaviour (Reseek vs Retry/DLQ)?
+                topic_partition_results: list[HandlerResultContext | BaseException] = await asyncio.gather(*tasks, return_exceptions=True)
+                for idx, result in enumerate(topic_partition_results):
+                    if isinstance(result, BatchedWrappedUnhandledException):
+                        # map the exception id back to the task above, we set the task
+                        # name when fanning out to be the "(topic, partition)".
+                        topic, partition = result.topic, result.partition
+                        blocked_partitions.setdefault(topic, []).append(partition)
+                    else:
+                        # The BatchHandler will include the necessary information to dictate the
+                        # remaining blocked or forwarded message(s).
+                        # TODO: Handle handler results, build up the correct partition OR messages to
+                        # act on, care here as subtle bugs are easy to add - this logic is complex.
+                        # todo: this successful partitions is a placeholder for now!
+                        successful_partitions.setdefault(result.topic, []).append(result.partition)
+                        await self._store_offsets(result.succeeded)
 
                 try:
                     # the entire batch of messages has been handled.  commit the internally stored offsets
