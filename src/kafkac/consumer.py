@@ -262,8 +262,8 @@ class AsyncKafkaConsumer:
                 # actually enqueueing them is successful.  If configured to move messages forward (for transient
                 # failures) to something like a retry queue or DLQ, kafkac will attempt to publish them.  Initially
                 # only a kafka topic will be supported, but future plugins will exist such as SQS.
-                poisoned_messages = {}
-                _ = poisoned_messages
+                poisoned_partitions = {}
+                _ = poisoned_partitions
 
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
