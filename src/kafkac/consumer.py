@@ -123,7 +123,7 @@ class AsyncKafkaConsumer:
         self.handler_func = handler_func
         # marks the consumer as running when start() is awaited.
         self.running = False
-        # signals the consumer has been interrupted or `stop() is awaited.
+        # signals the consumer that `stop()` has been awated.
         self.interrupted = False
         # the topic regexes that the consumer should subscribe too.
         self.topics_regexes = topic_regexes
@@ -163,8 +163,6 @@ class AsyncKafkaConsumer:
         # this should be provided as a tuple, in the form of (interval, callback) where the
         # client can expect (approximately) the callback to fire every interval.
         self.stats_callback = stats_callback
-        # remove this later
-        self.done = False
         # The logger to use.  if the user provides their own logger it will be used, otherwise
         # the internal kafkac logger will be used.
         # Note: This must be set before _prepare_cfg is invoked.
@@ -389,13 +387,6 @@ class AsyncKafkaConsumer:
 
                 except KafkaException:
                     continue
-
-        # TODO: Exception handling.
-        except KeyboardInterrupt:
-            self.interrupted = True
-            # TODO: Make sure it can't hang forever.
-            while not self.done:
-                await asyncio.sleep(0.1)
         except Exception:
             raise
         finally:
@@ -403,7 +394,6 @@ class AsyncKafkaConsumer:
                 # leave group and commit final offsets.
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
-                self.done = True
 
     async def _process(
         self, grouped_messages: dict[tuple[str, int], list[Message]]
