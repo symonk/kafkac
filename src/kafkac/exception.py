@@ -24,3 +24,8 @@ class MismatchHandlerContextResultsException(KafkacException):
 
 class UnsupportedMessagingGroupException(KafkacException):
     """Raised when the messaging group option (task_mode) provided is not supported"""
+
+
+class PoisonedMessagesWithNowhereToGoException(KafkacException):
+    """Raised when the user marks messages as `poisoned` but has not configured a 'next-hop' queue
+    to enqueue the messages too."""

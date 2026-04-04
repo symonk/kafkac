@@ -19,6 +19,7 @@ from .exc_handler import BatchExcHandler
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
 from .exception import UnsupportedMessagingGroupException
+from .exception import PoisonedMessagesWithNowhereToGoException
 from .grouping import GroupRegistry
 from .handler import MessagesHandlerFunc
 from .result import HandlerResultContext
@@ -241,30 +242,6 @@ class AsyncKafkaConsumer:
 
             self.running = True
             while not self.interrupted:
-                # Note: For developers changing these concepts, be very careful - the decision tree is very nuanced
-                # and is extremely prone to mistakes, resulting in disastrous outcomes for users.
-                #
-                # blocked_partitions denotes which partitions should be 'blocked', if there are any blocked
-                # partitions, kafkac will sort the offsets for the partition up until the blocked offset.
-                # those will be `stored`, and the 'blocked' case will be 're-seeked'.  What this means is,
-                # next polls() will return those messages AGAIN.  Be careful when using this as it may not be
-                # what you want.  The preferred approach would be to mark such messages as `poisoned` (below)
-                # and have them enqueued somewhere else for processing in the future.  Using `blocked` here will
-                # cause head-of-queue blocking on that partition, this may be desirable in some cases (such as
-                # external systems completely down, that would result in mass dead lettering etc., but be very
-                # careful that in how you make those decisions.
-                blocked_partitions = {}
-                # successful_partitions will have all their offsets stored and commited, kafkac will ensure no
-                # blocked offsets are 'intermingled' within these (or poisoned messages) to ensure user error
-                # does not result in message loss.
-                successful_partitions = {}
-                # poisoned_messages denotes messages that are technically successful, but only if the action of
-                # actually enqueueing them is successful.  If configured to move messages forward (for transient
-                # failures) to something like a retry queue or DLQ, kafkac will attempt to publish them.  Initially
-                # only a kafka topic will be supported, but future plugins will exist such as SQS.
-                poisoned_partitions = {}
-                _ = poisoned_partitions
-
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
@@ -318,30 +295,73 @@ class AsyncKafkaConsumer:
                     dict[tuple[str, int], list[Message]] | dict[str, list[Message]]
                 ) = self._message_grouper_func(applicable_messages)
 
-                # tasks are fanned out on a (topic, partition) basis, the user provided handler can do with
-                # those what it sees fit, based on the requirements.  Maybe order is not important, but the
-                # handler itself can decide that, alternatively, the handler itself can fan out.
-                # TODO: Figure out if we want the user handler to receive the consumer and 'store offsets'?
                 # TODO: This does not honour task_mode, its always (topic, partition) atm.
                 topic_partition_results = await self._process(grouped_messages)
 
-                for idx, result in enumerate(topic_partition_results):
-                    if isinstance(result, BatchedWrappedUnhandledException):
-                        # map the exception id back to the task above, we set the task
-                        # name when fanning out to be the "(topic, partition)".
-                        topic, partition = result.topic, result.partition
-                        blocked_partitions.setdefault(topic, []).append(partition)
+                # process the user batch handler results, enforcing complex logic to derive the
+                # blocked, successful and poisoned offsets that can actually be stored.
+                # Note: For developers changing these concepts, be very careful - the decision tree is very nuanced
+                # and is extremely prone to mistakes, resulting in disastrous outcomes for users.
+                #
+                # blocked_partitions denotes which partitions should be 'blocked', if there are any blocked
+                # partitions, kafkac will sort the offsets for the partition up until the blocked offset.
+                # those will be `stored`, and the 'blocked' case will be 're-seeked'.  What this means is,
+                # next polls() will return those messages AGAIN.  Be careful when using this as it may not be
+                # what you want.  The preferred approach would be to mark such messages as `poisoned` (below)
+                # and have them enqueued somewhere else for processing in the future.  Using `blocked` here will
+                # cause head-of-queue blocking on that partition, this may be desirable in some cases (such as
+                # external systems completely down, that would result in mass dead lettering etc., but be very
+                # careful that in how you make those decisions.
+
+                # successful_partitions will have all their offsets stored and commited, kafkac will ensure no
+                # blocked offsets are 'intermingled' within these (or poisoned messages) to ensure user error
+                # does not result in message loss.
+
+                # poisoned_messages denotes messages that are technically successful, but only if the action of
+                # actually enqueueing them is successful.  If configured to move messages forward (for transient
+                # failures) to something like a retry queue or DLQ, kafkac will attempt to publish them.  Initially
+                # only a kafka topic will be supported, but future plugins will exist such as SQS.
+
+                (
+                    successful_partitions,
+                    blocked_partitions,
+                    poisoned_partitions,
+                ) = await self._process_results(topic_partition_results)
+
+                # _process_results is responsible for raising/aborting when exceptions are raised or
+                # exceptional cases arise.  At this point, we can trust the dictionaries data is accurate
+                # and ordered appropriately where no message loss can occur.
+
+                # if only successful partitions is populated, all batches are successful and can be acked to
+                # kafka appropriately.
+                if successful_partitions and (not blocked_partitions and not poisoned_partitions):
+                    # commit all, move on.
+                    ...
+                    continue
+
+                # poisoned_partitions should be empty at this point (and merged into successful)
+                # unless they failed on the enqueueing mechanism, for now, this will cause an
+                # exit/crash, but not until we have committed the successful offsets up to that
+                # point.  This will be more 'user-configurable' in the future.
+                if poisoned_partitions:
+                    # if the user has poisoned, but not configured a place for them to go, exit.
+                    if self.retrier is None:
+                        raise PoisonedMessagesWithNowhereToGoException("poisoned messages with no retry/dlq configured")
                     else:
-                        # The BatchHandler will include the necessary information to dictate the
-                        # remaining blocked or poisoned message(s).
-                        # TODO: Handle handler results, build up the correct partition OR messages to
-                        # act on, care here as subtle bugs are easy to add - this logic is complex.
-                        # todo: this successful partitions is a placeholder for now!
-                        successful_partitions.setdefault(result.topic, []).append(
-                            result.partition
-                        )
-                        # TODO: FIX THIS
-                        await self._ack_offsets(result.succeeded, False, False)
+                        # attempt to 'enqueue' the messages to the retry queue
+                        # if successful, they can be marked 'successful'
+                        # if failing, how should we handle it?
+                        # They can be blocked + re-seeked.
+                        # They can cause an exit.
+                        # They can be 'ignored' and continue on.
+                        ...
+
+                # if there are blocked partitions, _process_results should have only returned successful
+                # offsets as such that for any blocked partition, no successful offset can exceed the
+                # first blocked offset for the same partition.
+                if blocked_partitions:
+                    # reseek the partitions, ensuring it is successful, on failure - exit/crash.
+                    ...
 
                 try:
                     # the entire batch of messages has been handled.  commit the internally stored offsets
@@ -385,7 +405,9 @@ class AsyncKafkaConsumer:
                 await self.consumer.close()
                 self.done = True
 
-    async def _process(self, grouped_messages: dict[tuple[str, int], list[Message]]) -> list[HandlerResultContext | Exception]:
+    async def _process(
+        self, grouped_messages: dict[tuple[str, int], list[Message]]
+    ) -> list[HandlerResultContext | Exception]:
         """_process fans out the batches appropriately and collects results."""
         tasks: list[asyncio.Task] = []  # order is important here.
         for key, partition_messages in grouped_messages.items():
@@ -404,9 +426,36 @@ class AsyncKafkaConsumer:
         # TODO: On unhandled exceptions, allow user controlled behaviour (Reseek vs Retry/DLQ)?
         topic_partition_results: list[
             HandlerResultContext | BaseException
-            ] = await asyncio.gather(*tasks, return_exceptions=True)
+        ] = await asyncio.gather(*tasks, return_exceptions=True)
         return topic_partition_results
 
+    async def _process_results(
+        self, results: list[HandlerResultContext]
+    ) -> tuple[dict, dict, dict]:
+        """_process_results parses the user results provided by upto N batched handler functions.  This
+        function is responsible for preventing user error and potential message loss.  It has a complex
+        decision tree for deriving what is actually committable."""
+        successful_partitions = {}
+        blocked_partitions = {}
+        poisoned_partitions = {}
+        for idx, result in enumerate(results):
+            if isinstance(result, BatchedWrappedUnhandledException):
+                # map the exception id back to the task above, we set the task
+                # name when fanning out to be the "(topic, partition)".
+                topic, partition = result.topic, result.partition
+                blocked_partitions.setdefault(topic, []).append(partition)
+            else:
+                # The BatchHandler will include the necessary information to dictate the
+                # remaining blocked or poisoned message(s).
+                # TODO: Handle handler results, build up the correct partition OR messages to
+                # act on, care here as subtle bugs are easy to add - this logic is complex.
+                # todo: this successful partitions is a placeholder for now!
+                successful_partitions.setdefault(result.topic, []).append(
+                    result.partition
+                )
+                # TODO: FIX THIS
+                await self._ack_offsets(result.succeeded, False, False)
+        return successful_partitions, blocked_partitions, poisoned_partitions
 
     async def _ack_offsets(
         self,
