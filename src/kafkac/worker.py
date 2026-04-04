@@ -20,7 +20,7 @@ class BatchedWrappedUnhandledException(Exception):
 
 
 # TODO: Improve/implement
-async def message_processor(
+async def process_batch(
     context: HandlerResultContext,
     messages: list[Message],
     handler: MessagesHandlerFunc,

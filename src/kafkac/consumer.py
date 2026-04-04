@@ -25,7 +25,7 @@ from .result import HandlerResultContext
 from .retry import RetryConfig
 from .retry import RetryRouter
 from .worker import BatchedWrappedUnhandledException
-from .worker import message_processor
+from .worker import process_batch
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way if they do not specify their own user_logger.
@@ -306,26 +306,8 @@ class AsyncKafkaConsumer:
                 # handler itself can decide that, alternatively, the handler itself can fan out.
                 # TODO: Figure out if we want the user handler to receive the consumer and 'store offsets'?
                 # TODO: This does not honour task_mode, its always (topic, partition) atm.
-                tasks: list[asyncio.Task] = []  # list as order is important later.
-                for key, partition_messages in grouped_messages.items():
-                    topic, partition = key
-                    ctx = HandlerResultContext(topic=topic, partition=partition)
-                    tasks.append(
-                        asyncio.create_task(
-                            message_processor(
-                                ctx,
-                                partition_messages,
-                                self.handler_func,
-                            )
-                        )
-                    )
+                topic_partition_results = await self._process(grouped_messages)
 
-                # as the tasks finish, store the successful offsets locally.
-                # TODO: Allow user controlled semaphore if they have massive (topic, partition) combinations.
-                # TODO: On unhandled exceptions, allow user controlled behaviour (Reseek vs Retry/DLQ)?
-                topic_partition_results: list[
-                    HandlerResultContext | BaseException
-                ] = await asyncio.gather(*tasks, return_exceptions=True)
                 for idx, result in enumerate(topic_partition_results):
                     if isinstance(result, BatchedWrappedUnhandledException):
                         # map the exception id back to the task above, we set the task
@@ -385,6 +367,29 @@ class AsyncKafkaConsumer:
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
                 self.done = True
+
+    async def _process(self, grouped_messages: dict[tuple[str, int], list[Message]]) -> list[HandlerResultContext | Exception]:
+        """_process fans out the batches appropriately and collects results."""
+        tasks: list[asyncio.Task] = []  # order is important here.
+        for key, partition_messages in grouped_messages.items():
+            topic, partition = key
+            ctx = HandlerResultContext(topic=topic, partition=partition)
+            tasks.append(
+                asyncio.create_task(
+                    process_batch(
+                        ctx,
+                        partition_messages,
+                        self.handler_func,
+                    )
+                )
+            )
+        # TODO: Allow user controlled semaphore if they have massive (topic, partition) combinations.
+        # TODO: On unhandled exceptions, allow user controlled behaviour (Reseek vs Retry/DLQ)?
+        topic_partition_results: list[
+            HandlerResultContext | BaseException
+            ] = await asyncio.gather(*tasks, return_exceptions=True)
+        return topic_partition_results
+
 
     async def _ack_offsets(
         self,
