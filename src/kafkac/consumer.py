@@ -15,6 +15,7 @@ from kafkac.filters import FilterFunc
 from kafkac.filters import discard_message
 
 from .debug import parse_debug_options
+from .exc_handler import BatchExcHandler
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
 from .exception import UnsupportedMessagingGroupException
@@ -92,7 +93,11 @@ class AsyncKafkaConsumer:
         consumer_logger: logging.Logger = logger,
         exit_on_eof: bool = False,
         bound_concurrency: int = 0,
-        task_mode: typing.Literal["topic", "partition"] = "partition"
+        task_mode: typing.Literal["topic", "partition"] = "partition",
+        batch_exc_handler: BatchExcHandler = BatchExcHandler(
+            retries=0,
+            on=tuple(),
+        ),
     ) -> None:
         if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -176,12 +181,16 @@ class AsyncKafkaConsumer:
         # topic -> The batch handler will be awaited for each (topic).  This means, 'mixed' partitions.
         # partition -> The batch handler will be awaited for each (topic, partition) combination (default).
         if task_mode not in {"topic", "partition"}:
-            raise UnsupportedMessagingGroupException(f"task_mode {task_mode!r} is not supported")
+            raise UnsupportedMessagingGroupException(
+                f"task_mode {task_mode!r} is not supported"
+            )
         self.task_mode = task_mode
         # assign the function responsible for delegating the kafka messages polled into their
         # appropriate (topic) or (topic, partition) groups.
         # This is influenced by `task_mode`.
         self._message_grouper_func = GroupRegistry[self.task_mode]
+        # configure behaviour if an unhandled exception leaks out of the batch handler.
+        self.batch_exc_handler = batch_exc_handler
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -193,7 +202,8 @@ class AsyncKafkaConsumer:
         # note: this must be instantiated last, since it is blocking and begins
         # the core loop.
         self.consumer: AIOConsumer = AIOConsumer(
-            consumer_conf=self.librdkafka_config, max_workers=self.workers,
+            consumer_conf=self.librdkafka_config,
+            max_workers=self.workers,
         )
 
     def _prepare_cfg(
@@ -287,21 +297,21 @@ class AsyncKafkaConsumer:
                 if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
-                    await self._store_offsets(messages)
-                    # TODO: commit all.
+                    await self._ack_offsets(messages, True, False)
                     continue
 
-                # group messages into a dictionary of (topic, partition) to guarantee
-                # order, but fan them out asynchronously after.  Order of messages is
-                # retained as we iterate the polled messages in order.
-                grouped_messages: dict[tuple[str, int], list[Message]] = (
-                    self._message_grouper_func(applicable_messages)
-                )
+                # based on user configuration, group the messages into either
+                # a dict of topic: list[Message] OR
+                # a dict of (topic, partition): list[Message]
+                grouped_messages: (
+                    dict[tuple[str, int], list[Message]] | dict[str, list[Message]]
+                ) = self._message_grouper_func(applicable_messages)
 
                 # tasks are fanned out on a (topic, partition) basis, the user provided handler can do with
                 # those what it sees fit, based on the requirements.  Maybe order is not important, but the
                 # handler itself can decide that, alternatively, the handler itself can fan out.
                 # TODO: Figure out if we want the user handler to receive the consumer and 'store offsets'?
+                # TODO: This does not honour task_mode, its always (topic, partition) atm.
                 tasks: list[asyncio.Task] = []  # list as order is important later.
                 for key, partition_messages in grouped_messages.items():
                     topic, partition = key
@@ -337,7 +347,8 @@ class AsyncKafkaConsumer:
                         successful_partitions.setdefault(result.topic, []).append(
                             result.partition
                         )
-                        await self._store_offsets(result.succeeded)
+                        # TODO: FIX THIS
+                        await self._ack_offsets(result.succeeded, False, False)
 
                 try:
                     # the entire batch of messages has been handled.  commit the internally stored offsets
@@ -381,50 +392,57 @@ class AsyncKafkaConsumer:
                 await self.consumer.close()
                 self.done = True
 
-    async def _commit(
+    async def _ack_offsets(
         self,
-        message: Message | None = None,
-        offsets: list[TopicPartition] | None = None,
-        block: bool = True,
-    ) -> bool:
-        """commit acks the stored offsets.
+        messages: list[Message],
+        commit: bool = False,
+        async_commit: bool = False,
+    ) -> list[TopicPartition]:
+        """_ack_offsets parses the offsets from the messages provided, storing them
+        locally and (optionally) acking the commits to the brokers.  This does a
+        single store and commit (async depending on user config) to amortize the
+        round-tip-time to the brokers and increase throughput.
 
-        TODO: Rewrite this logic, hacked for now."""
-        commit_kw = {
-            k: v
-            for k, v in {
-                "asynchronous": not block,
-                "message": message,
-                "offsets": offsets,
-            }.items()
-            if v is not None
-        }
+        Offsets are stored and committed at a partition level, and the offsets committed
+        should represent the next offset to poll(), not the highest offset in the batch,
+        however only including the 'max' offsets is sufficient.
 
-        results = await self.consumer.commit(**commit_kw)
+        :param messages: list of messages to ack
+        :param commit: whether to commit offsets to brokers
+        :param async_commit: whether to commit offsets to brokers asynchronously (blocking until all acks)
 
-        # asynchronous commit, a background librdkafka will handle the committing at some point
-        # in the future.
-        if results is None:
-            return False
+        :return: The partitions that failed to commit (if using synchronous commit)
+        """
 
-        # the topic/partitions are returned that were attempted, ensure all of them were marked as a success:
-        # TODO: don't swallow the errors
-        successes = [
-            topic_partition
-            for topic_partition in results
-            if topic_partition.error is None
-        ]
-        if len(successes) == len(results):
-            return True
-        return False
-
-    async def _store_offsets(self, messages: list[Message]) -> None:
-        """internally store the offsets for successful messages."""
+        # calculate the highest (max) offset to commit based on each (topic, partition) combination
+        # of the input messages.
+        offsets_to_commit: dict[tuple[str, int], int] = {}
         for message in messages:
+            key = (message.topic(), message.partition())
+            offsets_to_commit[key] = max(
+                offsets_to_commit.get(key, -1), message.offset()
+            )
+
+        # build a single TopicPartition object for each combination of (topic, partition) - we only
+        # need to store the 'highest', not all of them.
+        highest_offsets = [
+            TopicPartition(topic, partition, offset + 1)
+            for (topic, partition), offset in offsets_to_commit.items()
+        ]
+
+        await self.consumer.store_offsets(offsets=highest_offsets)
+        if commit:
             try:
-                await self.consumer.store_offsets(message=message)
+                commit_result: list[TopicPartition | None] = await self.consumer.commit(
+                    asynchronous=async_commit or self.async_commit
+                )
+                if commit_result is None:
+                    return []
+                return [tp for tp in commit_result if tp.error is not None]
             except KafkaException:
-                ...
+                raise
+        else:
+            return []
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]

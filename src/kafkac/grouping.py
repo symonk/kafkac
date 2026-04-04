@@ -23,6 +23,7 @@ def group_messages_by_topic_partition(
         topic_partition_combinations[key].append(message)
     return topic_partition_combinations
 
+
 def group_messages_by_topic(messages: list[Message]) -> dict[str, list[Message]]:
     """group_messages_by_topic splits the array of kafka messages into batches
     based on the topic only.  This results in mixed partitions being in the same batch.
