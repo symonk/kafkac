@@ -6,7 +6,9 @@ from confluent_kafka import Message
 FilterFunc = typing.Callable[[Message], typing.Awaitable[bool]]
 
 
-async def discard_message(topic: str, message: Message, filters: list[FilterFunc]) -> bool:
+async def discard_message(
+    topic: str, message: Message, filters: list[FilterFunc]
+) -> bool:
     """discard_message returns True if the message should be discarded by a
     filter for messages on a specific topic."""
     message_topic = message.topic()

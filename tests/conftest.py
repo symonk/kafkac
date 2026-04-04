@@ -47,7 +47,9 @@ def test_kafka(
                 bootstrap_cfg = {"bootstrap.servers": connection}
                 yield bootstrap_cfg, kafka
     except Timeout:
-        raise pytest.UsageError("lock was not aquired - are you running multiple processes/pytests?")
+        raise pytest.UsageError(
+            "lock was not aquired - are you running multiple processes/pytests?"
+        )
 
 
 @pytest.fixture(scope="function")

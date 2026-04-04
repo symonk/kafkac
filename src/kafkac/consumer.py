@@ -5,11 +5,11 @@ import typing
 from collections import defaultdict
 
 from confluent_kafka import KafkaError
-from confluent_kafka.error import ConsumeError
 from confluent_kafka import KafkaException
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.aio import AIOConsumer
+from confluent_kafka.error import ConsumeError
 
 from kafkac.filters import FilterFunc
 from kafkac.filters import discard_message
@@ -22,7 +22,8 @@ from .handler import MessagesHandlerFunc
 from .result import HandlerResultContext
 from .retry import RetryConfig
 from .retry import RetryRouter
-from .worker import message_processor, BatchedWrappedUnhandledException
+from .worker import BatchedWrappedUnhandledException
+from .worker import message_processor
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way if they do not specify their own user_logger.
@@ -241,7 +242,8 @@ class AsyncKafkaConsumer:
                     messages = [
                         message
                         for message in await self.consumer.consume(
-                            num_messages=self.batch_size, timeout=self.poll_interval,
+                            num_messages=self.batch_size,
+                            timeout=self.poll_interval,
                         )
                         if message.error() is None
                     ]
@@ -291,14 +293,16 @@ class AsyncKafkaConsumer:
                 # those what it sees fit, based on the requirements.  Maybe order is not important, but the
                 # handler itself can decide that, alternatively, the handler itself can fan out.
                 # TODO: Figure out if we want the user handler to receive the consumer and 'store offsets'?
-                tasks: list[asyncio.Task] =  []  # list as order is important later.
+                tasks: list[asyncio.Task] = []  # list as order is important later.
                 for key, partition_messages in grouped_messages.items():
                     topic, partition = key
                     ctx = HandlerResultContext(topic=topic, partition=partition)
                     tasks.append(
                         asyncio.create_task(
                             message_processor(
-                                ctx, partition_messages, self.handler_func,
+                                ctx,
+                                partition_messages,
+                                self.handler_func,
                             )
                         )
                     )
@@ -306,7 +310,9 @@ class AsyncKafkaConsumer:
                 # as the tasks finish, store the successful offsets locally.
                 # TODO: Allow user controlled semaphore if they have massive (topic, partition) combinations.
                 # TODO: On unhandled exceptions, allow user controlled behaviour (Reseek vs Retry/DLQ)?
-                topic_partition_results: list[HandlerResultContext | BaseException] = await asyncio.gather(*tasks, return_exceptions=True)
+                topic_partition_results: list[
+                    HandlerResultContext | BaseException
+                ] = await asyncio.gather(*tasks, return_exceptions=True)
                 for idx, result in enumerate(topic_partition_results):
                     if isinstance(result, BatchedWrappedUnhandledException):
                         # map the exception id back to the task above, we set the task
@@ -319,7 +325,9 @@ class AsyncKafkaConsumer:
                         # TODO: Handle handler results, build up the correct partition OR messages to
                         # act on, care here as subtle bugs are easy to add - this logic is complex.
                         # todo: this successful partitions is a placeholder for now!
-                        successful_partitions.setdefault(result.topic, []).append(result.partition)
+                        successful_partitions.setdefault(result.topic, []).append(
+                            result.partition
+                        )
                         await self._store_offsets(result.succeeded)
 
                 try:

@@ -8,11 +8,11 @@ class BatchedWrappedUnhandledException(Exception):
     """WrappedException retains the topic and partition of the messages sent to
     the batched handler when user code fails and an unhandled exception leaks
     out of the handler."""
+
     def __init__(self, topic: str, partition: int, exc: Exception) -> None:
         super().__init__(f"Handler failed for {topic}:{partition}: {exc}")
         self.topic = topic
         self.partition = partition
-
 
     @property
     def cause(self) -> BaseException | None:
@@ -30,4 +30,6 @@ async def message_processor(
     try:
         return await handler(context, messages)
     except Exception as exc:
-        raise BatchedWrappedUnhandledException(topic=context.topic, partition=context.partition, exc=exc) from exc
+        raise BatchedWrappedUnhandledException(
+            topic=context.topic, partition=context.partition, exc=exc
+        ) from exc

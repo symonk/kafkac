@@ -96,5 +96,4 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
 
 
 @pytest.mark.asyncio
-async def test_subscribing_error_raises(fx_kafka) -> None:
-    ...
+async def test_subscribing_error_raises(fx_kafka) -> None: ...
