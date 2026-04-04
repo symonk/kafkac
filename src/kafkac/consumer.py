@@ -91,7 +91,6 @@ class AsyncKafkaConsumer:
         debug: str | None = None,
         stats_callback: tuple[float, typing.Awaitable[str]] | None = None,
         consumer_logger: logging.Logger = logger,
-        exit_on_eof: bool = False,
         bound_concurrency: int = 0,
         task_mode: typing.Literal["topic", "partition"] = "partition",
         batch_exc_handler: BatchExcHandler = BatchExcHandler(
@@ -169,9 +168,6 @@ class AsyncKafkaConsumer:
         # the internal kafkac logger will be used.
         # Note: This must be set before _prepare_cfg is invoked.
         self.consumer_logger = consumer_logger
-        # Allow exiting the consumer when the end of a partition/messages is reached.
-        # useful for one-shot style consumers i.e (a run-once DLQ processor).
-        self.exit_on_eof = exit_on_eof
         # if the use case has alot of (topic, partitions) and you wish to potentially not overwhelm
         # downstream systems, setting bound_concurrency will limit (via a semaphore) the number of
         # (topic, partition) tasks in flight any given time.  By default, the tasks are unbound and
@@ -211,8 +207,6 @@ class AsyncKafkaConsumer:
         user_cfg: dict[str, typing.Any],
     ) -> dict[str, typing.Any]:
         """TODO: Document"""
-        if not self.exit_on_eof:
-            user_cfg["enable.partition.eof"] = False
         user_cfg["enable.auto.commit"] = False
         user_cfg["enable.auto.offset.store"] = False
         if self.stats_callback:
