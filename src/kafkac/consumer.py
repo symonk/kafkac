@@ -241,13 +241,30 @@ class AsyncKafkaConsumer:
 
             self.running = True
             while not self.interrupted:
-                # keep track of partitions that are successful and others which are considered `blocked`.
-                # the term `blocked` in this regard means, something the user wishes to be retried OR
-                # that was configured to be shipped on to a retry or DLQ but failed, resulting in a
-                # reseek.
+                # Note: For developers changing these concepts, be very careful - the decision tree is very nuanced
+                # and is extremely prone to mistakes, resulting in disastrous outcomes for users.
+                #
+                # blocked_partitions denotes which partitions should be 'blocked', if there are any blocked
+                # partitions, kafkac will sort the offsets for the partition up until the blocked offset.
+                # those will be `stored`, and the 'blocked' case will be 're-seeked'.  What this means is,
+                # next polls() will return those messages AGAIN.  Be careful when using this as it may not be
+                # what you want.  The preferred approach would be to mark such messages for `forwarding` (below)
+                # and have them enqueued somewhere else for processing in the future.  Using `blocked` here will
+                # cause head-of-queue blocking on that partition, this may be desirable in some cases (such as
+                # external systems completely down, that would result in mass dead lettering etc., but be very
+                # careful that in how you make those decisions.
                 blocked_partitions = {}
+                # successful_partitions will have all their offsets stored and commited, kafkac will ensure no
+                # blocked offsets are 'intermingled' within these (or forwarded messages) to ensure user error
+                # does not result in message loss.
                 successful_partitions = {}
+                # forwarded_messages denotes messages that are technically successful, but only if the action of
+                # actually enqueueing them is successful.  If configured to move messages forward (for transient
+                # failures) to something like a retry queue or DLQ, kafkac will attempt to publish them.  Initially
+                # only a kafka topic will be supported, but future plugins will exist such as SQS.
                 forwarded_messages = {}
+                _ = forwarded_messages
+
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
                 # across the entire batch of messages.
