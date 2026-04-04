@@ -22,3 +22,21 @@ def group_messages_by_topic_partition(
         key = (message.topic(), message.partition())
         topic_partition_combinations[key].append(message)
     return topic_partition_combinations
+
+def group_messages_by_topic(messages: list[Message]) -> dict[str, list[Message]]:
+    """group_messages_by_topic splits the array of kafka messages into batches
+    based on the topic only.  This results in mixed partitions being in the same batch.
+
+    Order within each partition should in theory be maintained, but if you have strict ordering
+    guarantees you should consider using (topic, partition) to get an invocation of the handler
+    for each of those combinations."""
+    topics = defaultdict(list)
+    for message in messages:
+        topics[message.topic()].append(message)
+    return topics
+
+
+GroupRegistry = {
+    "partition": group_messages_by_topic_partition,
+    "topic": group_messages_by_topic,
+}

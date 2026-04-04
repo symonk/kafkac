@@ -20,3 +20,6 @@ class InvalidHandlerFunctionException(KafkacException):
 
 class MismatchHandlerContextResultsException(KafkacException):
     """Raised when the batch handler is sent N number of messages and only stores result data for N-N results"""
+
+class UnsupportedMessagingGroupException(KafkacException):
+    """Raised when the messaging group option (task_mode) provided is not supported"""

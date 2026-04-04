@@ -17,7 +17,8 @@ from kafkac.filters import discard_message
 from .debug import parse_debug_options
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
-from .grouping import group_messages_by_topic_partition
+from .exception import UnsupportedMessagingGroupException
+from .grouping import GroupRegistry
 from .handler import MessagesHandlerFunc
 from .result import HandlerResultContext
 from .retry import RetryConfig
@@ -91,6 +92,7 @@ class AsyncKafkaConsumer:
         consumer_logger: logging.Logger = logger,
         exit_on_eof: bool = False,
         bound_concurrency: int = 0,
+        task_mode: typing.Literal["topic", "partition"] = "partition"
     ) -> None:
         if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -165,14 +167,21 @@ class AsyncKafkaConsumer:
         # Allow exiting the consumer when the end of a partition/messages is reached.
         # useful for one-shot style consumers i.e (a run-once DLQ processor).
         self.exit_on_eof = exit_on_eof
-        # assign the function responsible for delegating the kafka messages polled into their
-        # appropriate (topic, partition) combinations.
-        self._message_grouper_func = group_messages_by_topic_partition
         # if the use case has alot of (topic, partitions) and you wish to potentially not overwhelm
         # downstream systems, setting bound_concurrency will limit (via a semaphore) the number of
         # (topic, partition) tasks in flight any given time.  By default, the tasks are unbound and
         # will attempt to execute all in parallel.
         self.bound_concurrency = bound_concurrency
+        # Allows configuring how the batch handler provided is invoked.  Two options are supported:
+        # topic -> The batch handler will be awaited for each (topic).  This means, 'mixed' partitions.
+        # partition -> The batch handler will be awaited for each (topic, partition) combination (default).
+        if task_mode not in {"topic", "partition"}:
+            raise UnsupportedMessagingGroupException(f"task_mode {task_mode!r} is not supported")
+        self.task_mode = task_mode
+        # assign the function responsible for delegating the kafka messages polled into their
+        # appropriate (topic) or (topic, partition) groups.
+        # This is influenced by `task_mode`.
+        self._message_grouper_func = GroupRegistry[self.task_mode]
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -184,7 +193,7 @@ class AsyncKafkaConsumer:
         # note: this must be instantiated last, since it is blocking and begins
         # the core loop.
         self.consumer: AIOConsumer = AIOConsumer(
-            consumer_conf=self.librdkafka_config, max_workers=self.workers
+            consumer_conf=self.librdkafka_config, max_workers=self.workers,
         )
 
     def _prepare_cfg(
