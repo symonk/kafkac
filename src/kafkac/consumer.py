@@ -497,8 +497,15 @@ class AsyncKafkaConsumer:
                 # They can be 'ignored' and continue on.
                 ...
 
-        # TODO: Generally this needs alot of logic around managing mixed results with blocked/poisoned + success.
-        self.consumer_logger.info("successful partitions: %d, blocked partitions %d", len(successful_partitions), len(blocked_partitions)) # TODO: Debugging - Remove
+        # we need to calculate the minimum offset (per partition) that is marked as blocked, because
+        # successful_partitions cannot include any messages exceeding that, this is currently awkward
+        # tho because what if the client/caller has fanned out the full batch and still implemented
+        # blocking semantics - In that case they will reseek the partition, but could be in a scenario
+        # where they are getting mass duplicates for the batch while blocked, since messages after
+        # it will be retried too in the same batch size - This is probably a human error scenario in
+        # reality, but hard to fix in kafkac.
+
+
         return successful_partitions, blocked_partitions
 
     async def _store_messages(
