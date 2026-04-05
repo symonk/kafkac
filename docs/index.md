@@ -17,6 +17,7 @@ configurations and implement a `handler` for processing your messages.
 - 📦 Multi topic, batch consumption.
 - 🧾 Message header filtering support with baked in common filters.
 - 🪦 `next-hop` support for retry queue/dlq enqueuing for transient failures.
+- 🔁 Supports `head-of-queue` blocking (if desirable)
 - ✨ More...
 
 ---
