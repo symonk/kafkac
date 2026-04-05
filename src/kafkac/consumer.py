@@ -234,7 +234,6 @@ class AsyncKafkaConsumer:
             try:
                 await self._subscribe()
             except KafkaException as exc:
-                self._log_kafka_exception(exc)
                 raise  # (TODO: Crash)
 
             self.running = True
