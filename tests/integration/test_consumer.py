@@ -1,9 +1,9 @@
 import asyncio
 import json
 import uuid
-from mailbox import Message
 
 import pytest
+from confluent_kafka import Message
 
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import HandlerResultContext
@@ -68,23 +68,26 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
 
     done = False
 
+    # TODO: Remove this concept.
     def statter(topic: str):
         async def stats_cb(json_str) -> None:
             data = json.loads(json_str)
             handled = await get_committed_messages_for_topic(data, topic)
             if handled == 5000:
                 nonlocal done
+                print("setting done")
                 done = True
 
         return stats_cb
 
     consumer = AsyncKafkaConsumer(
         handler_func=successful_test_handler,
-        batch_size=1000,
+        batch_size=5000,
         topic_regexes=[topic.topic],
         config=consumer_config,
         poll_interval=0.1,
-        stats_callback=(100, statter(topic.topic)),
+        stats_callback=(1000, statter(topic.topic)),
+        debug="all",
     )
 
     async def exit_when_successful():

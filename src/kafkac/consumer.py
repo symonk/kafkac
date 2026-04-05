@@ -18,8 +18,8 @@ from .debug import parse_debug_options
 from .exc_handler import BatchExcHandler
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
-from .exception import UnsupportedMessagingGroupException
 from .exception import PoisonedMessagesWithNowhereToGoException
+from .exception import UnsupportedMessagingGroupException
 from .grouping import GroupRegistry
 from .handler import MessagesHandlerFunc
 from .result import HandlerResultContext
@@ -132,7 +132,7 @@ class AsyncKafkaConsumer:
         self.topics_regexes = topic_regexes
         # the timeout to wait while trying to get a batch of messages.  If this timeout is exceeded
         # before the batch is full, a partial batch will be returned and processed.
-        self.poll_interval = max(0.1, poll_interval)
+        self.poll_interval = max(-1.0, poll_interval)
         # An (optional) topic specific list of filter funcs.  Filter funcs allow inspecting
         # kafka headers to discard messages without full deserialisation of the body which
         # is often costly.  At present regex on topics is not an option and topics are exactly
@@ -285,7 +285,8 @@ class AsyncKafkaConsumer:
                 if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
-                    await self._ack_messages(messages, True, False)
+                    await self._store_messages(messages)
+                    await self._commit(asynchronous=self.async_commit)
                     continue
 
                 # based on user configuration, group the messages into either
@@ -323,35 +324,22 @@ class AsyncKafkaConsumer:
                 (
                     successful_partitions,
                     blocked_partitions,
-                    poisoned_partitions,
                 ) = await self._process_results(topic_partition_results)
 
                 # _process_results is responsible for raising/aborting when exceptions are raised or
                 # exceptional cases arise.  At this point, we can trust the dictionaries data is accurate
                 # and ordered appropriately where no message loss can occur.
 
+                if not successful_partitions and not blocked_partitions:
+                    raise RuntimeError("should not be possible at this stage - library bug somewhere.")
+
                 # if only successful partitions is populated, all batches are successful and can be acked to
                 # kafka appropriately.
-                if successful_partitions and (not blocked_partitions and not poisoned_partitions):
-                    # commit all, move on.
+                if successful_partitions and not blocked_partitions:
+                    # full successful batch, may include poisoned successful retries
+                    await self._store_offsets(offsets=successful_partitions)
+                    await self._commit(asynchronous=self.async_commit)
                     continue
-
-                # poisoned_partitions should be empty at this point (and merged into successful)
-                # unless they failed on the enqueueing mechanism, for now, this will cause an
-                # exit/crash, but not until we have committed the successful offsets up to that
-                # point.  This will be more 'user-configurable' in the future.
-                if poisoned_partitions:
-                    # if the user has poisoned, but not configured a place for them to go, exit.
-                    if self.retrier is None:
-                        raise PoisonedMessagesWithNowhereToGoException("poisoned messages with no retry/dlq configured")
-                    else:
-                        # attempt to 'enqueue' the messages to the retry queue
-                        # if successful, they can be marked 'successful'
-                        # if failing, how should we handle it?
-                        # They can be blocked + re-seeked.
-                        # They can cause an exit.
-                        # They can be 'ignored' and continue on.
-                        ...
 
                 # if there are blocked partitions, _process_results should have only returned successful
                 # offsets as such that for any blocked partition, no successful offset can exceed the
@@ -420,52 +408,63 @@ class AsyncKafkaConsumer:
 
     async def _process_results(
         self, results: list[HandlerResultContext]
-    ) -> tuple[dict, dict, dict]:
+    ) -> tuple[list[TopicPartition], list[TopicPartition]]:
         """_process_results parses the user results provided by upto N batched handler functions.  This
         function is responsible for preventing user error and potential message loss.  It has a complex
         decision tree for deriving what is actually committable."""
-        successful_partitions = {}
-        blocked_partitions = {}
+        successful_partitions = []
+        blocked_partitions = []
         poisoned_partitions = {}
         for idx, result in enumerate(results):
             if isinstance(result, BatchedWrappedUnhandledException):
                 # map the exception id back to the task above, we set the task
                 # name when fanning out to be the "(topic, partition)".
-                topic, partition = result.topic, result.partition
-                blocked_partitions.setdefault(topic, []).append(partition)
+                # TODO: Not working for now - how do we get the context back here?
+                blocked_partitions.extend([])
             else:
                 # The BatchHandler will include the necessary information to dictate the
                 # remaining blocked or poisoned message(s).
                 # TODO: Handle handler results, build up the correct partition OR messages to
                 # act on, care here as subtle bugs are easy to add - this logic is complex.
                 # todo: this successful partitions is a placeholder for now!
-                successful_partitions.setdefault(result.topic, []).append(
-                    result.partition
-                )
-                # TODO: FIX THIS
-                await self._ack_messages(result.succeeded, False, False)
-        return successful_partitions, blocked_partitions, poisoned_partitions
+                successful_partitions.extend([TopicPartition(
+                    topic=msg.topic(),
+                    partition=msg.partition(),
+                    offset=msg.offset() + 1,
+                ) for msg in result.succeeded])
 
-    async def _ack_messages(
+        # poisoned_partitions should be empty at this point (and merged into successful)
+        # unless they failed on the enqueueing mechanism, for now, this will cause an
+        # exit/crash, but not until we have committed the successful offsets up to that
+        # point.  This will be more 'user-configurable' in the future.
+        if poisoned_partitions:
+            # if the user has poisoned, but not configured a place for them to go, exit.
+            if self.retrier is None:
+                raise PoisonedMessagesWithNowhereToGoException("poisoned messages with no retry/dlq configured")
+            else:
+                # attempt to 'enqueue' the messages to the retry queue
+                # if successful, they can be marked 'successful'
+                # if failing, how should we handle it?
+                # They can be blocked + re-seeked.
+                # They can cause an exit.
+                # They can be 'ignored' and continue on.
+                ...
+
+        # TODO: Generally this needs alot of logic around managing mixed results with blocked/poisoned + success.
+        return successful_partitions, blocked_partitions
+
+    async def _store_messages(
         self,
         messages: list[Message] = None,
-        commit: bool = False,
-        async_commit: bool = False,
-    ) -> list[TopicPartition]:
-        """_ack_offsets parses the offsets from the messages provided, storing them
-        locally and (optionally) acking the commits to the brokers.  This does a
-        single store and commit (async depending on user config) to amortize the
-        round-tip-time to the brokers and increase throughput.
+    ) -> None:
+        """
+        _store_messages calculates the highest per (topic, partition) from a grouping of messages
+        and stores those offsets in a single call.
 
-        Offsets are stored and committed at a partition level, and the offsets committed
-        should represent the next offset to poll(), not the highest offset in the batch,
-        however only including the 'max' offsets is sufficient.
+        Storing a single value for each partition is sufficient, and the values stored should be the
+        next offset to consume (max+1).
 
-        :param messages: list of messages to ack
-        :param commit: whether to commit offsets to brokers
-        :param async_commit: whether to commit offsets to brokers asynchronously (blocking until all acks)
-
-        :return: The partitions that failed to commit (if using synchronous commit)
+        :param messages: The messages to store.
         """
 
         # calculate the highest (max) offset to commit based on each (topic, partition) combination
@@ -484,22 +483,18 @@ class AsyncKafkaConsumer:
             for (topic, partition), offset in offsets_to_commit.items()
         ]
 
-        await self.consumer.store_offsets(offsets=highest_offsets)
-        if commit:
-            try:
-                commit_result: list[TopicPartition | None] = await self.consumer.commit(
-                    asynchronous=async_commit or self.async_commit
-                )
-                if commit_result is None:
-                    return []
-                return [tp for tp in commit_result if tp.error is not None]
-            except KafkaException:
-                raise
-        else:
-            return []
+        await self._store_offsets(offsets=highest_offsets)
 
-    async def _ack_offsets(self, offsets: list[TopicPartition]):
-        ...
+    async def _store_offsets(self, offsets: list[TopicPartition]):
+        """_store_offsets stores the offsets locally ready for committing in the future."""
+        await self.consumer.store_offsets(offsets=offsets)
+
+    async def _commit(self, *, asynchronous: bool) -> None:
+        out = await self.consumer.commit(asynchronous=asynchronous)
+        failed = [tp.error() for tp in out if tp.error is not None]
+        if failed:
+            # TODO: Remove later
+            raise Exception("some partitions failed")
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
