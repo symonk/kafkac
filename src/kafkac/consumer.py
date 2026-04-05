@@ -205,6 +205,8 @@ class AsyncKafkaConsumer:
             consumer_conf=self.librdkafka_config,
             max_workers=self.workers,
         )
+        # track when the consumer.consume loop has finalized and is finished/exited.
+        self.done = False
 
     def _prepare_cfg(
         self,
@@ -348,34 +350,13 @@ class AsyncKafkaConsumer:
                 # first blocked offset for the same partition.
                 if blocked_partitions:
                     # reseek the partitions, ensuring it is successful, on failure - exit/crash.
-                    ...
+                    for tp in blocked_partitions:
+                        # TODO: Exception handling, what to do if we cannot reseek?
+                        self.consumer_logger.error("reseeking partitions: {tp}".format(tp=tp))
+                        await self.consumer.seek(tp)
 
-                try:
-                    # the entire batch of messages has been handled.  commit the internally stored offsets
-                    # once to amortize the RTT cost to the broker(s).
-                    # The internal loop can store offsets internally at various different points.
-                    # no offsets or messages are required here, instead it will commit anything
-                    # internally stored.
-                    committed_topic_partitions: (
-                        list[TopicPartition] | None
-                    ) = await self.consumer.commit(asynchronous=self.async_commit)
-                    # Some partitions possibly failed during commit.
-                    # This might be mid re-balance, or broker network/IO errors etc.
-                    # There is not much to be done, get visibility and retry next loop.
-                    # Most errors are handling implicitly by librdkafka.
-                    if committed_topic_partitions is None:
-                        continue
-                    commit_failures: typing.DefaultDict[str, set[int]] = defaultdict(
-                        set
-                    )
-                    for topic_partition in committed_topic_partitions:
-                        if topic_partition.error is not None:
-                            commit_failures[topic_partition.topic].add(
-                                topic_partition.partition
-                            )
-
-                except KafkaException:
-                    continue
+                # TODO: Do we need to have a case of a single commit per batch here? or are all the branches
+                # cover sufficiently etc?
         except Exception:
             raise
         finally:
@@ -383,6 +364,7 @@ class AsyncKafkaConsumer:
                 # leave group and commit final offsets.
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
+                self.done = True
 
     async def _process(
         self, grouped_messages: GroupedMessagesType,
@@ -422,18 +404,22 @@ class AsyncKafkaConsumer:
                 # map the exception id back to the task above, we set the task
                 # name when fanning out to be the "(topic, partition)".
                 # TODO: Not working for now - how do we get the context back here?
-                blocked_partitions.extend([])
+                ...
             else:
                 # The BatchHandler will include the necessary information to dictate the
                 # remaining blocked or poisoned message(s).
-                # TODO: Handle handler results, build up the correct partition OR messages to
-                # act on, care here as subtle bugs are easy to add - this logic is complex.
-                # todo: this successful partitions is a placeholder for now!
+                # TODO: successful needs to be aware of blocked to not mark something > than
+                # lowest blocked (per partition as successful).
                 successful_partitions.extend([TopicPartition(
                     topic=msg.topic(),
                     partition=msg.partition(),
                     offset=msg.offset(),
                 ) for msg in result.succeeded])
+                blocked_partitions.extend([TopicPartition(
+                    topic=msg.topic(),
+                    partition=msg.partition(),
+                    offset=msg.offset(),
+                ) for msg in result.blocked])
 
         # poisoned_partitions should be empty at this point (and merged into successful)
         # unless they failed on the enqueueing mechanism, for now, this will cause an
@@ -557,10 +543,14 @@ class AsyncKafkaConsumer:
         used instead."""
         self.consumer_logger.error("received transient error: %s", err)
 
-    def stop(self) -> None:
+    async def stop(self, wait: bool = True) -> None:
         """stop signals that the consumer should begin a graceful shutdown.
         This will still allow in flight batches to be processed."""
         self.interrupted = True
+        if wait:
+            while not self.done:
+                await asyncio.sleep(0.1)
+
 
     async def __aenter__(self) -> typing.Self:
         """__enter__ allows the KafkaConsumer instance to be used as a context

@@ -3,7 +3,6 @@ import json
 import uuid
 
 import pytest
-import logging
 from confluent_kafka import Message
 
 from kafkac import AsyncKafkaConsumer
@@ -16,6 +15,12 @@ async def successful_test_handler(
     ctx: HandlerResultContext, messages: list[Message]
 ) -> HandlerResultContext:
     ctx.store_successes(messages)
+    return ctx
+
+async def head_of_queue_block_handler(
+        ctx: HandlerResultContext, messages: list[Message]
+) -> HandlerResultContext:
+    ctx.store_blocks(messages)
     return ctx
 
 
@@ -93,10 +98,40 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
     async def exit_when_successful():
         while not done:
             await asyncio.sleep(0.05)
-        consumer.stop()
+        await consumer.stop()
 
     await asyncio.gather(*(exit_when_successful(), consumer.consume()))
 
 
 @pytest.mark.asyncio
 async def test_subscribing_error_raises(fx_kafka) -> None: ...
+
+
+@pytest.mark.asyncio
+@pytest.mark.skip
+async def test_head_of_queue_blocking_functions_correctly(fx_kafka, message_producer) -> None:
+    admin_client, bootstrap_config, container, topic = fx_kafka
+    message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
+    consumer_config = {
+        "bootstrap.servers": bootstrap_config.get("bootstrap.servers"),
+        "group.id": str(uuid.uuid4()),
+        "auto.offset.reset": "earliest",
+    }
+
+    consumer = AsyncKafkaConsumer(
+        handler_func=head_of_queue_block_handler,
+        batch_size=5000,
+        topic_regexes=[topic.topic],
+        config=consumer_config,
+        poll_interval=5,
+        debug="all",
+    )
+    try:
+        await asyncio.wait_for(consumer.consume(), timeout=3)
+    except asyncio.TimeoutError:
+        # nothing should have been committed.
+        # a reseek on all partitions is happening constantly.
+        committed = await consumer.consumer.committed()
+        assert {tp.offset() for tp in committed} == {"-1001"}
+    await consumer.stop()
+

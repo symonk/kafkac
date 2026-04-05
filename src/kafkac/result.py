@@ -31,10 +31,10 @@ class HandlerResultContext:
     def store_successes(self, messages: list[Message]) -> None:
         self.succeeded.extend(messages)
 
-    def store_failure(self, message: Message) -> None:
+    def store_block(self, message: Message) -> None:
         self.blocked.append(message)
 
-    def store_failures(self, messages: list[Message]) -> None:
+    def store_blocks(self, messages: list[Message]) -> None:
         self.blocked.extend(messages)
 
     def store_poisoned(self, message: Message) -> None:
