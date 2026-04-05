@@ -7,8 +7,11 @@ from confluent_kafka import Message
 
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import HandlerResultContext
+import logging
 
 from ..test_utils import get_committed_messages_for_topic
+
+logger = logging.getLogger(__name__)
 
 
 async def successful_test_handler(
@@ -80,6 +83,7 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         async def stats_cb(json_str) -> None:
             data = json.loads(json_str)
             handled = await get_committed_messages_for_topic(data, topic)
+            logger.info(f"committed messages: {handled}")
             if handled == 5000:
                 nonlocal done
                 done = True

@@ -362,7 +362,7 @@ class AsyncKafkaConsumer:
                 # C) Failed to enqueue and configured to HOQ block in which case they will be in blocked above.
                 # TODO: commit() is sufficient here with offsets
                 try:
-                    await self._store_offsets(offsets=successful_partitions)
+                    await self._store_messages(messages=successful_partitions)
                     await self._commit(asynchronous=self.async_commit)
                 except KafkaException as exc:
                     self._log_kafka_exception(exc)
@@ -498,6 +498,7 @@ class AsyncKafkaConsumer:
                 ...
 
         # TODO: Generally this needs alot of logic around managing mixed results with blocked/poisoned + success.
+        self.consumer_logger.info("successful partitions: %d, blocked partitions %d", len(successful_partitions), len(blocked_partitions)) # TODO: Debugging - Remove
         return successful_partitions, blocked_partitions
 
     async def _store_messages(
