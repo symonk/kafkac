@@ -372,8 +372,12 @@ class AsyncKafkaConsumer:
         finally:
             if self.running:
                 # leave group and commit final offsets.
-                await self.consumer.unsubscribe()
-                await self.consumer.close()
+                try:
+                    await self.consumer.unsubscribe()
+                    await self.consumer.close()
+                except KafkaException as exc:
+                    self._log_kafka_exception(exc)
+                    # carry on silently, not much that can be done at this point meaningful.
             self.done = True
 
     async def _subscribe(self) -> None:
