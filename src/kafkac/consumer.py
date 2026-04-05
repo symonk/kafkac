@@ -132,7 +132,9 @@ class AsyncKafkaConsumer:
         self.topics_regexes = topic_regexes
         # the timeout to wait while trying to get a batch of messages.  If this timeout is exceeded
         # before the batch is full, a partial batch will be returned and processed.
-        self.poll_interval = max(-1.0, poll_interval)
+        # indefinite polling is not supported (-1) because it can lead to segfaults when interrupted
+        # etc (attempting to close a consumer) that is stuck in the poll code.
+        self.poll_interval = max(0.1, poll_interval)
         # An (optional) topic specific list of filter funcs.  Filter funcs allow inspecting
         # kafka headers to discard messages without full deserialisation of the body which
         # is often costly.  At present regex on topics is not an option and topics are exactly
