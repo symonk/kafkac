@@ -339,7 +339,7 @@ class AsyncKafkaConsumer:
                 # kafka appropriately.
                 if successful_partitions and not blocked_partitions:
                     # full successful batch, may include poisoned successful retries
-                    await self._store_offsets(offsets=successful_partitions)
+                    await self._store_messages(messages=successful_partitions)
                     await self._commit(asynchronous=self.async_commit)
                     continue
 
@@ -432,7 +432,7 @@ class AsyncKafkaConsumer:
                 successful_partitions.extend([TopicPartition(
                     topic=msg.topic(),
                     partition=msg.partition(),
-                    offset=msg.offset() + 1,
+                    offset=msg.offset(),
                 ) for msg in result.succeeded])
 
         # poisoned_partitions should be empty at this point (and merged into successful)
@@ -457,7 +457,7 @@ class AsyncKafkaConsumer:
 
     async def _store_messages(
         self,
-        messages: list[Message] = None,
+        messages: list[Message] | list[TopicPartition],
     ) -> None:
         """
         _store_messages calculates the highest per (topic, partition) from a grouping of messages
@@ -466,16 +466,21 @@ class AsyncKafkaConsumer:
         Storing a single value for each partition is sufficient, and the values stored should be the
         next offset to consume (max+1).
 
-        :param messages: The messages to store.
+        :param messages: The messages to store.  These can either be a confluent kafka Message type
+        in which case the topic/partition are callable methods and invoked, or a list of `TopicPartition`
+        objects.
         """
 
         # calculate the highest (max) offset to commit based on each (topic, partition) combination
         # of the input messages.
         offsets_to_commit: dict[tuple[str, int], int] = {}
         for message in messages:
-            key = (message.topic(), message.partition())
+            topic = message.topic() if callable(message.topic) else message.topic
+            partition = message.partition() if callable(message.partition) else message.partition
+            offset = message.offset() if callable(message.offset) else message.offset
+            key = (topic, partition)
             offsets_to_commit[key] = max(
-                offsets_to_commit.get(key, -1), message.offset()
+                offsets_to_commit.get(key, -1), offset
             )
 
         # build a single TopicPartition object for each combination of (topic, partition) - we only
@@ -509,8 +514,8 @@ class AsyncKafkaConsumer:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].add(partition)
             self.consumer_logger.debug(
-                "consumer was assigned new partitions",
-                extra={"before": before, "after": self.assigned_partitions},
+                "consumer was assigned new partitions: (before=%s), (after=%s)",
+            before,self.assigned_partitions,
             )
         # TODO: incremental assign if KIP-848
         # await self.consumer.assign(partitions)
@@ -528,8 +533,8 @@ class AsyncKafkaConsumer:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].discard(partition)
             self.consumer_logger.debug(
-                "consumer had partitions revoked",
-                extra={"before": before, "after": self.assigned_partitions},
+                "consumer had partitions revoked: (before=%s), (after=%s)",
+                before, self.assigned_partitions,
             )
 
         # commit anything stored already.

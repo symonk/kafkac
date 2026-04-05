@@ -3,6 +3,7 @@ import json
 import uuid
 
 import pytest
+import logging
 from confluent_kafka import Message
 
 from kafkac import AsyncKafkaConsumer
@@ -75,7 +76,6 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
             handled = await get_committed_messages_for_topic(data, topic)
             if handled == 5000:
                 nonlocal done
-                print("setting done")
                 done = True
 
         return stats_cb
@@ -85,7 +85,7 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         batch_size=5000,
         topic_regexes=[topic.topic],
         config=consumer_config,
-        poll_interval=0.1,
+        poll_interval=5,
         stats_callback=(1000, statter(topic.topic)),
         debug="all",
     )
