@@ -62,6 +62,13 @@ if __name__ == "__main__":
 
 This section includes the 'must knows' when interacting with the `kafkac` library.
 
+#### Important Nuances of Head-of-queue blocking
+
+`Kafkac` offers the ability to requeue transient failures to a 'next-hop' queue (or store), this should be the
+preferred design methodology, however should you wish to avail of head of queue blocking on transient failures
+ensure that you are not fetching sizable batches AND fanning out concurrently on a per message basis inside your
+handler function because if you do, you will create potentially manage duplicates while that partition is blocked.
+
 #### Access debug logs:
 
 If you have a need to debug the consumer and access the underlying `librdkafka` debug logs, this can be achieved
