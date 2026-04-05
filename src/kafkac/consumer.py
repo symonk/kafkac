@@ -374,7 +374,7 @@ class AsyncKafkaConsumer:
                 # leave group and commit final offsets.
                 await self.consumer.unsubscribe()
                 await self.consumer.close()
-                self.done = True
+            self.done = True
 
     async def _subscribe(self) -> None:
         """_subscribe subscribes the consumer to the regex based topics provided
