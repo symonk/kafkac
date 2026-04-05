@@ -33,6 +33,9 @@ from .worker import process_batch
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
+# An alias for the topic, or topic partition fan out strategies.
+GroupedMessagesType = dict[tuple[str, int], list[Message]] | dict[str, list[Message]]
+
 
 # TODO: This uses internal per message commit() calls, that is awfully slow, the RTT is per
 # message, use store_offset and do a single commit per batch!
@@ -282,15 +285,13 @@ class AsyncKafkaConsumer:
                 if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
-                    await self._ack_offsets(messages, True, False)
+                    await self._ack_messages(messages, True, False)
                     continue
 
                 # based on user configuration, group the messages into either
                 # a dict of topic: list[Message] OR
                 # a dict of (topic, partition): list[Message]
-                grouped_messages: (
-                    dict[tuple[str, int], list[Message]] | dict[str, list[Message]]
-                ) = self._message_grouper_func(applicable_messages)
+                grouped_messages: GroupedMessagesType = self._message_grouper_func(applicable_messages)
 
                 # TODO: This does not honour task_mode, its always (topic, partition) atm.
                 topic_partition_results = await self._process(grouped_messages)
@@ -394,7 +395,7 @@ class AsyncKafkaConsumer:
                 await self.consumer.close()
 
     async def _process(
-        self, grouped_messages: dict[tuple[str, int], list[Message]]
+        self, grouped_messages: GroupedMessagesType,
     ) -> list[HandlerResultContext | Exception]:
         """_process fans out the batches appropriately and collects results."""
         tasks: list[asyncio.Task] = []  # order is important here.
@@ -442,12 +443,12 @@ class AsyncKafkaConsumer:
                     result.partition
                 )
                 # TODO: FIX THIS
-                await self._ack_offsets(result.succeeded, False, False)
+                await self._ack_messages(result.succeeded, False, False)
         return successful_partitions, blocked_partitions, poisoned_partitions
 
-    async def _ack_offsets(
+    async def _ack_messages(
         self,
-        messages: list[Message],
+        messages: list[Message] = None,
         commit: bool = False,
         async_commit: bool = False,
     ) -> list[TopicPartition]:
@@ -496,6 +497,9 @@ class AsyncKafkaConsumer:
                 raise
         else:
             return []
+
+    async def _ack_offsets(self, offsets: list[TopicPartition]):
+        ...
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
