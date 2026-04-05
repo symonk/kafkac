@@ -123,7 +123,7 @@ class AsyncKafkaConsumer:
         self.handler_func = handler_func
         # marks the consumer as running when start() is awaited.
         self.running = False
-        # signals the consumer that `stop()` has been awated.
+        # signals the consumer that `stop()` has been called.
         self.interrupted = False
         # the topic regexes that the consumer should subscribe too.
         self.topics_regexes = topic_regexes
@@ -232,7 +232,6 @@ class AsyncKafkaConsumer:
                     topics=self.topics_regexes,
                     on_assign=self._on_assign,
                     on_revoke=self._on_revoke,
-                    on_lost=self._on_lost,
                 )
             except ConsumeError as exc:
                 self.consumer_logger.exception(exc)
@@ -334,7 +333,6 @@ class AsyncKafkaConsumer:
                 # kafka appropriately.
                 if successful_partitions and (not blocked_partitions and not poisoned_partitions):
                     # commit all, move on.
-                    ...
                     continue
 
                 # poisoned_partitions should be empty at this point (and merged into successful)
@@ -545,15 +543,6 @@ class AsyncKafkaConsumer:
                 pass
         # TODO: KIP-848 incremental unassign?
         # await self.consumer.incremental_unassign(partitions)
-
-    async def _on_lost(self, _: AIOConsumer, partitions: list[TopicPartition]) -> None:
-        """on_lost is invoked when partitions owned by this particular consumer are considered
-        lost.  This could be called when there is a failure in the coordinator etc.  At this
-        point (unlike on_revoke) we no longer own the partitions when this is invoked internally."""
-        async with self.rebalance_lock:
-            for partition in partitions:
-                topic, partition = partition.topic, partition.partition
-                self.assigned_partitions[topic].discard(partition)
 
     def error_cb(self, err: KafkaError) -> None:
         """error_cb is the default handle for global errors.  Importantly these
