@@ -67,7 +67,9 @@ This section includes the 'must knows' when interacting with the `kafkac` librar
 `Kafkac` offers the ability to requeue transient failures to a 'next-hop' queue (or store), this should be the
 preferred design methodology, however should you wish to avail of head of queue blocking on transient failures
 ensure that you are not fetching sizable batches AND fanning out concurrently on a per message basis inside your
-handler function because if you do, you will create potentially manage duplicates while that partition is blocked.
+handler function because if you do, you will create potentially **many** duplicates while that partition is blocked
+which can be disastrous.  `Kafkac` cannot prevent this at the library level, as the handler function is entirely
+up to you how you manage the messages.
 
 #### Access debug logs:
 
