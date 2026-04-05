@@ -45,9 +45,7 @@ class HandlerResultContext:
         """success indicates if the entire batch was a success without any blocked
         or dead letter partitions"""
         return (
-            bool(self.succeeded)
-            and not bool(self.poisoned)
-            and not bool(self.blocked)
+            bool(self.succeeded) and not bool(self.poisoned) and not bool(self.blocked)
         )
 
     @property
@@ -71,7 +69,5 @@ class HandlerResultContext:
         """all_dead_lettered implies all partitions are blocked but not in a
         fatal way, messages require dead letter queueing."""
         return (
-            bool(self.poisoned)
-            and not bool(self.blocked)
-            and not bool(self.succeeded)
+            bool(self.poisoned) and not bool(self.blocked) and not bool(self.succeeded)
         )

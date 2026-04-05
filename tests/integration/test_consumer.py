@@ -17,8 +17,9 @@ async def successful_test_handler(
     ctx.store_successes(messages)
     return ctx
 
+
 async def head_of_queue_block_handler(
-        ctx: HandlerResultContext, messages: list[Message]
+    ctx: HandlerResultContext, messages: list[Message]
 ) -> HandlerResultContext:
     ctx.store_blocks(messages)
     return ctx
@@ -90,7 +91,7 @@ async def test_simple_container(fx_kafka, message_producer) -> None:
         batch_size=5000,
         topic_regexes=[topic.topic],
         config=consumer_config,
-        poll_interval=5,
+        poll_interval=0.1,
         stats_callback=(1000, statter(topic.topic)),
         debug="all",
     )
@@ -109,7 +110,9 @@ async def test_subscribing_error_raises(fx_kafka) -> None: ...
 
 @pytest.mark.asyncio
 @pytest.mark.skip
-async def test_head_of_queue_blocking_functions_correctly(fx_kafka, message_producer) -> None:
+async def test_head_of_queue_blocking_functions_correctly(
+    fx_kafka, message_producer
+) -> None:
     admin_client, bootstrap_config, container, topic = fx_kafka
     message_producer(bootstrap_config=bootstrap_config, topic=topic.topic, count=5000)
     consumer_config = {
@@ -123,7 +126,7 @@ async def test_head_of_queue_blocking_functions_correctly(fx_kafka, message_prod
         batch_size=5000,
         topic_regexes=[topic.topic],
         config=consumer_config,
-        poll_interval=5,
+        poll_interval=0.1,
         debug="all",
     )
     try:
@@ -134,4 +137,3 @@ async def test_head_of_queue_blocking_functions_correctly(fx_kafka, message_prod
         committed = await consumer.consumer.committed()
         assert {tp.offset() for tp in committed} == {"-1001"}
     await consumer.stop()
-

@@ -9,7 +9,6 @@ from confluent_kafka import KafkaException
 from confluent_kafka import Message
 from confluent_kafka import TopicPartition
 from confluent_kafka.aio import AIOConsumer
-from confluent_kafka.error import ConsumeError
 
 from kafkac.filters import FilterFunc
 from kafkac.filters import discard_message
@@ -233,16 +232,13 @@ class AsyncKafkaConsumer:
         when KafkaConsumer is used as a context manager."""
         try:
             try:
-                await self.consumer.subscribe(
-                    topics=self.topics_regexes,
-                    on_assign=self._on_assign,
-                    on_revoke=self._on_revoke,
-                )
-            except ConsumeError as exc:
-                self.consumer_logger.exception(exc)
-                raise
+                await self._subscribe()
+            except KafkaException as exc:
+                self._log_kafka_exception(exc)
+                raise  # (TODO: Crash)
 
             self.running = True
+
             while not self.interrupted:
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
                 # for batches is better for performance, as the async overhead is amortized
@@ -256,14 +252,18 @@ class AsyncKafkaConsumer:
                         )
                         if message.error() is None
                     ]
-                except ConsumeError as exc:
-                    self.consumer_logger.exception(exc)
-                    continue
+                except KafkaException as exc:
+                    self._log_kafka_exception(exc)
+                    raise  # (TODO: Crash)
+
                 if not messages:
                     # Polling the broker for messages timed out without a message.
                     # The topic is possibly low traffic, or the producer may be
                     # slow or having an issue.  No need to sleep here to avoid a hot
                     # CPU loop, the consume call will delay this particular task.
+                    self.consumer_logger.info(
+                        "no more messages"
+                    )  # (TODO: Debugging - Remove)
                     continue
 
                 # apply (optional) user derived filtering, which allows dropping messages
@@ -271,6 +271,7 @@ class AsyncKafkaConsumer:
                 # filters skip messages, retaining those that are 'applicable' for further
                 # processing.  Filters are provided on a `per-topic` basis and regex is not
                 # currently supported (yet).
+                # TODO: Abstract into _filter_msgs func
                 applicable_messages = messages if not self.filter_funcs else []
                 if self.filter_funcs:
                     for message in messages:
@@ -287,14 +288,23 @@ class AsyncKafkaConsumer:
                 if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
-                    await self._store_messages(messages)
-                    await self._commit(asynchronous=self.async_commit)
-                    continue
+                    # TODO: commit() is enough in these cases, no need to store, pass partitions to commit()
+                    # (TODO: Crash)
+                    try:
+                        await self._store_messages(messages)
+                        await self._commit(asynchronous=self.async_commit)
+                    except KafkaException as exc:
+                        self._log_kafka_exception(exc)
+                        raise
+                    else:
+                        continue
 
                 # based on user configuration, group the messages into either
                 # a dict of topic: list[Message] OR
                 # a dict of (topic, partition): list[Message]
-                grouped_messages: GroupedMessagesType = self._message_grouper_func(applicable_messages)
+                grouped_messages: GroupedMessagesType = self._message_grouper_func(
+                    applicable_messages
+                )
 
                 # TODO: This does not honour task_mode, its always (topic, partition) atm.
                 topic_partition_results = await self._process(grouped_messages)
@@ -323,38 +333,41 @@ class AsyncKafkaConsumer:
                 # failures) to something like a retry queue or DLQ, kafkac will attempt to publish them.  Initially
                 # only a kafka topic will be supported, but future plugins will exist such as SQS.
 
-                (
-                    successful_partitions,
-                    blocked_partitions,
-                ) = await self._process_results(topic_partition_results)
-
-                # _process_results is responsible for raising/aborting when exceptions are raised or
-                # exceptional cases arise.  At this point, we can trust the dictionaries data is accurate
-                # and ordered appropriately where no message loss can occur.
+                successful_partitions, blocked_partitions = await self._process_results(
+                    topic_partition_results
+                )
 
                 if not successful_partitions and not blocked_partitions:
-                    raise RuntimeError("should not be possible at this stage - library bug somewhere.")
+                    raise RuntimeError(
+                        "Kafkac internal bug - please open an issue @ https://github.com/symonk/kafkac/issues"
+                    )
 
-                # if only successful partitions is populated, all batches are successful and can be acked to
-                # kafka appropriately.
-                if successful_partitions and not blocked_partitions:
-                    # full successful batch, may include poisoned successful retries
-                    await self._store_messages(messages=successful_partitions)
+                # At this point, successful and blocked partitions are accurate, it is the responsibility of
+                # _process_results to ensure correct constraints are applied internally there.
+                # reseek partitions that are marked as blocked (if any exists)
+                # if we fail to reseek a partition, crash the consumer for now (TODO: Crash)
+                for blocked_partition in blocked_partitions:
+                    try:
+                        await self.consumer.seek(blocked_partition)
+                    except KafkaException as exc:
+                        self._log_kafka_exception(exc)
+                        raise
+
+                # Finally commit the successful offsets, for an individual partition, the max offset here will
+                # be no greater than either: A) The max of the initial polled messages (if no blocks occur) or
+                # B) Less than the least offset for a block partition to prevent message loss.
+                #
+                # By this point, if next-hop is configured, those transient failures will either be:
+                # A) Successfully enqueued, and included in successful_partitions.
+                # B) Failed to enqueue and configured to crash the consumer.
+                # C) Failed to enqueue and configured to HOQ block in which case they will be in blocked above.
+                # TODO: commit() is sufficient here with offsets
+                try:
+                    await self._store_offsets(offsets=successful_partitions)
                     await self._commit(asynchronous=self.async_commit)
-                    continue
-
-                # if there are blocked partitions, _process_results should have only returned successful
-                # offsets as such that for any blocked partition, no successful offset can exceed the
-                # first blocked offset for the same partition.
-                if blocked_partitions:
-                    # reseek the partitions, ensuring it is successful, on failure - exit/crash.
-                    for tp in blocked_partitions:
-                        # TODO: Exception handling, what to do if we cannot reseek?
-                        self.consumer_logger.error("reseeking partitions: {tp}".format(tp=tp))
-                        await self.consumer.seek(tp)
-
-                # TODO: Do we need to have a case of a single commit per batch here? or are all the branches
-                # cover sufficiently etc?
+                except KafkaException as exc:
+                    self._log_kafka_exception(exc)
+                    raise  # (TODO: Crash)
         except Exception:
             raise
         finally:
@@ -364,8 +377,40 @@ class AsyncKafkaConsumer:
                 await self.consumer.close()
                 self.done = True
 
+    async def _subscribe(self) -> None:
+        """_subscribe subscribes the consumer to the regex based topics provided
+        when the consumer was initialised."""
+        try:
+            await self.consumer.subscribe(
+                topics=self.topics_regexes,
+                on_assign=self._on_assign,
+                on_revoke=self._on_revoke,
+            )
+        except KafkaException as exc:
+            self._log_kafka_exception(exc)
+
+    def _log_kafka_exception(self, exc: KafkaException) -> None:
+        """_log_kafka_error unwraps a KafkaException and logs information about the
+        underlying KafkaError.
+
+        :param exc: The KafkaException (raised by kafka consumer operations).
+
+        """
+        err: KafkaError = exc.args[0]
+        self.consumer_logger.error(
+            "failed to subscribe to topics",
+            extra={
+                "topics": self.topics_regexes,
+                "error": err.str(),
+                "error_code": err.code(),
+                "retriable": err.retriable(),
+                "fatal": err.fatal(),
+            },
+        )
+
     async def _process(
-        self, grouped_messages: GroupedMessagesType,
+        self,
+        grouped_messages: GroupedMessagesType,
     ) -> list[HandlerResultContext | Exception]:
         """_process fans out the batches appropriately and collects results."""
         tasks: list[asyncio.Task] = []  # order is important here.
@@ -397,7 +442,7 @@ class AsyncKafkaConsumer:
         successful_partitions = []
         blocked_partitions = []
         poisoned_partitions = {}
-        for idx, result in enumerate(results):
+        for result in results:
             if isinstance(result, BatchedWrappedUnhandledException):
                 # map the exception id back to the task above, we set the task
                 # name when fanning out to be the "(topic, partition)".
@@ -408,16 +453,26 @@ class AsyncKafkaConsumer:
                 # remaining blocked or poisoned message(s).
                 # TODO: successful needs to be aware of blocked to not mark something > than
                 # lowest blocked (per partition as successful).
-                successful_partitions.extend([TopicPartition(
-                    topic=msg.topic(),
-                    partition=msg.partition(),
-                    offset=msg.offset(),
-                ) for msg in result.succeeded])
-                blocked_partitions.extend([TopicPartition(
-                    topic=msg.topic(),
-                    partition=msg.partition(),
-                    offset=msg.offset(),
-                ) for msg in result.blocked])
+                successful_partitions.extend(
+                    [
+                        TopicPartition(
+                            topic=msg.topic(),
+                            partition=msg.partition(),
+                            offset=msg.offset(),
+                        )
+                        for msg in result.succeeded
+                    ]
+                )
+                blocked_partitions.extend(
+                    [
+                        TopicPartition(
+                            topic=msg.topic(),
+                            partition=msg.partition(),
+                            offset=msg.offset(),
+                        )
+                        for msg in result.blocked
+                    ]
+                )
 
         # poisoned_partitions should be empty at this point (and merged into successful)
         # unless they failed on the enqueueing mechanism, for now, this will cause an
@@ -426,7 +481,9 @@ class AsyncKafkaConsumer:
         if poisoned_partitions:
             # if the user has poisoned, but not configured a place for them to go, exit.
             if self.retrier is None:
-                raise PoisonedMessagesWithNowhereToGoException("poisoned messages with no retry/dlq configured")
+                raise PoisonedMessagesWithNowhereToGoException(
+                    "poisoned messages with no retry/dlq configured"
+                )
             else:
                 # attempt to 'enqueue' the messages to the retry queue
                 # if successful, they can be marked 'successful'
@@ -460,12 +517,14 @@ class AsyncKafkaConsumer:
         offsets_to_commit: dict[tuple[str, int], int] = {}
         for message in messages:
             topic = message.topic() if callable(message.topic) else message.topic
-            partition = message.partition() if callable(message.partition) else message.partition
+            partition = (
+                message.partition()
+                if callable(message.partition)
+                else message.partition
+            )
             offset = message.offset() if callable(message.offset) else message.offset
             key = (topic, partition)
-            offsets_to_commit[key] = max(
-                offsets_to_commit.get(key, -1), offset
-            )
+            offsets_to_commit[key] = max(offsets_to_commit.get(key, -1), offset)
 
         # build a single TopicPartition object for each combination of (topic, partition) - we only
         # need to store the 'highest', not all of them.
@@ -499,7 +558,8 @@ class AsyncKafkaConsumer:
                 self.assigned_partitions[topic].add(partition)
             self.consumer_logger.debug(
                 "consumer was assigned new partitions: (before=%s), (after=%s)",
-            before,self.assigned_partitions,
+                before,
+                self.assigned_partitions,
             )
         # TODO: incremental assign if KIP-848
         # await self.consumer.assign(partitions)
@@ -518,7 +578,8 @@ class AsyncKafkaConsumer:
                 self.assigned_partitions[topic].discard(partition)
             self.consumer_logger.debug(
                 "consumer had partitions revoked: (before=%s), (after=%s)",
-                before, self.assigned_partitions,
+                before,
+                self.assigned_partitions,
             )
 
         # commit anything stored already.
@@ -548,7 +609,6 @@ class AsyncKafkaConsumer:
         if wait:
             while not self.done:
                 await asyncio.sleep(0.1)
-
 
     async def __aenter__(self) -> typing.Self:
         """__enter__ allows the KafkaConsumer instance to be used as a context

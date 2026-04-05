@@ -48,8 +48,14 @@ def test_kafka(
                 yield bootstrap_cfg, kafka
     except Timeout:
         raise pytest.UsageError(
-            "lock was not aquired - are you running multiple processes/pytests?"
-        )
+            "lock was not acquired - is another pytest process hanging?"
+        ) from None
+
+
+class TestKafka:
+    admin_client: AdminClient
+    bootstrap_servers: typing.List[str]
+    topic: NewTopic
 
 
 @pytest.fixture(scope="function")
