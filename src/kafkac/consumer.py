@@ -37,8 +37,6 @@ logger.addHandler(logging.NullHandler())
 GroupedMessagesType = dict[tuple[str, int], list[Message]] | dict[str, list[Message]]
 
 
-# TODO: This uses internal per message commit() calls, that is awfully slow, the RTT is per
-# message, use store_offset and do a single commit per batch!
 class AsyncKafkaConsumer:
     """
     AsyncKafkaConsumer is a fully asynchronously kafka consumer, ready for use
