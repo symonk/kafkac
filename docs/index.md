@@ -1,29 +1,23 @@
 > [!CAUTION]
 > Kafkac is NOT production ready, do not use it as such yet.
 
-> [!IMPORTANT]
-> `Kafkac` only supports kafka broker version `4.0.0+`
-
 ## 🐍 kafkac — A Kafka Consumer framework for python
 
 `kafkac` is a batteries-included python kafka consumer, built on top of `librdkafka`.  It aims to simplify
-the complexities and edge cases of writing a consumer.  You simply need to plugin some basic `librdkafka`
+the complexities and edge cases of writing a consumer.  You simply need to plug in some basic `librdkafka`
 configurations and implement a `handler` for processing your messages.
 
 ---
 
 ### ⚙️ Core Features
 
-- ⚡️ Super fast and fully `asynchronous`.
-- 🧬 Automatic serialisation of messages, version-aware based on message `version` header if set.
+- ⚡️ Async API
+- 🧬 Automatic Pydantic serialisation supported based on `version` headers
 - 🛡 Robust error handling for stability.
 - 📦 Multi topic, batch consumption.
 - 🧾 Message header filtering support with baked in common filters.
-- 📊 Event system for useful statistics.
-- 🪦 `Deadlettering/Retry Queue` support for blocking messages baked in.
-- 🔁 Automatic retries with customisable behaviour for different errors.
-- 🧘 Automatic rebalance handling, fully supports `KIP-848` (cooperative rebalancing).
-- ✨ Much more...
+- 🪦 `next-hop` support for retry queue/dlq enqueuing for transient failures.
+- ✨ More...
 
 ---
 
@@ -76,15 +70,6 @@ of these values, kafkac will parse it.  Priority is given to the specified `debu
 
 Providing a `logger` object when instantiating the async consumer, will cause these
 debug logs to be routed to your handler and you can do with them what you see fit.
-
----
-
-### Benchmarks
-
-Below are some benchmarks that preload various levels of messages onto a topic, run a `kafkac` consumer to
-process those messages, writing the messages to another topic, confirming all the messages are accounted for.
-
-// TODO
 
 ---
 
