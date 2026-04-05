@@ -621,5 +621,4 @@ class AsyncKafkaConsumer:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self.consumer.close()
-        return None
+        await self.stop()
