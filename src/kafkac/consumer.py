@@ -387,6 +387,7 @@ class AsyncKafkaConsumer:
             )
         except KafkaException as exc:
             self._log_kafka_exception(exc)
+            raise
 
     def _log_kafka_exception(self, exc: KafkaException) -> None:
         """_log_kafka_error unwraps a KafkaException and logs information about the
