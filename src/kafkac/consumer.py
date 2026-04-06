@@ -260,29 +260,12 @@ class AsyncKafkaConsumer:
                     # The topic is possibly low traffic, or the producer may be
                     # slow or having an issue.  No need to sleep here to avoid a hot
                     # CPU loop, the consume call will delay this particular task.
-                    self.consumer_logger.info(
-                        "no more messages"
-                    )  # (TODO: Debugging - Remove)
                     continue
 
-                # apply (optional) user derived filtering, which allows dropping messages
-                # based on kafka headers etc. prior to parsing the full payload.  These
-                # filters skip messages, retaining those that are 'applicable' for further
-                # processing.  Filters are provided on a `per-topic` basis and regex is not
-                # currently supported (yet).
-                # TODO: Abstract into _filter_msgs func
-                applicable_messages = messages if not self.filter_funcs else []
-                if self.filter_funcs:
-                    for message in messages:
-                        topic = message.topic()
-                        awaitables = self.filter_funcs.get(topic)
-                        if not awaitables:
-                            # there are registered 'filters' for this topic
-                            exclude = await discard_message(topic, message, awaitables)
-                            if not exclude:
-                                applicable_messages.append(exclude)
-                        else:
-                            applicable_messages.append(message)
+                # apply filters to the fetched messages, discarded ones which are not 'in-scope'.
+                # retain order of messages to not break partition ordering guarantees.
+                # Note: filters are based on (topic, message) combinations and registered as such.
+                applicable_messages = await self._apply_filters(messages)
 
                 if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
@@ -392,6 +375,33 @@ class AsyncKafkaConsumer:
         except KafkaException as exc:
             self._log_kafka_exception(exc)
             raise
+
+    async def _apply_filters(self, messages: list[Message]) -> list[Message]:
+        """_apply_filters applies topic-level filtering to all the messages
+        in the batch, returning a list[Message] objects that have 'passed' the
+        filtering and should be processed.
+
+        Messages skipped by discard_message calls will be stored/committed
+        as part of the batch processing.
+
+        :param messages: The list of messages polled from the broker.
+
+        :return: The list of applicable messages (retaining order to guarantee partition
+        ordering guarantees)
+        """
+        applicable_messages = messages if not self.filter_funcs else []
+        if self.filter_funcs:
+            for message in messages:
+                topic = message.topic()
+                filter_awaitables = self.filter_funcs.get(topic)
+                if not filter_awaitables:
+                    # there have been 'filter' functions applied to this particular topic.
+                    exclude = await discard_message(topic, message, filter_awaitables)
+                    if not exclude:
+                        applicable_messages.append(message)
+                else:
+                    applicable_messages.append(message)
+        return applicable_messages
 
     def _log_kafka_exception(self, exc: KafkaException) -> None:
         """_log_kafka_error unwraps a KafkaException and logs information about the
