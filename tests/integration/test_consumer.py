@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import uuid
 
 import pytest
@@ -7,7 +8,6 @@ from confluent_kafka import Message
 
 from kafkac import AsyncKafkaConsumer
 from kafkac.handler import HandlerResultContext
-import logging
 
 from ..test_utils import get_committed_messages_for_topic
 

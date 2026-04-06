@@ -322,7 +322,7 @@ class AsyncKafkaConsumer:
                         await self.consumer.seek(blocked_partition)
                     except KafkaException as exc:
                         self._log_kafka_exception(exc)
-                        raise # (TODO: Crash)
+                        raise  # (TODO: Crash)
 
                 # Finally commit the successful offsets, for an individual partition, the max offset here will
                 # be no greater than either: A) The max of the initial polled messages (if no blocks occur) or
@@ -386,14 +386,15 @@ class AsyncKafkaConsumer:
                     applicable_messages.append(message)
         return applicable_messages
 
-    def _log_kafka_exception(self, exc: KafkaException) -> None:
+    def _log_kafka_exception(self, exc: KafkaException | KafkaException) -> None:
         """_log_kafka_error unwraps a KafkaException and logs information about the
-        underlying KafkaError.
+        underlying KafkaError.  In some cases, such as synchronous commit failures
+        TopicPartition types are returned and their error is a KafkaError explicitly.
 
-        :param exc: The KafkaException (raised by kafka consumer operations).
+        :param exc: The KafkaException | KafkaError (raised by kafka consumer operations).
 
         """
-        err: KafkaError = exc.args[0]
+        err: KafkaError = exc.args[0] if isinstance(exc, KafkaException) else exc
         self.consumer_logger.error(
             "failed to subscribe to topics",
             extra={
@@ -498,7 +499,6 @@ class AsyncKafkaConsumer:
         # it will be retried too in the same batch size - This is probably a human error scenario in
         # reality, but hard to fix in kafkac.
 
-
         return successful_partitions, blocked_partitions
 
     @staticmethod
@@ -543,19 +543,26 @@ class AsyncKafkaConsumer:
 
         return highest_offsets
 
-    async def _ack_messages(self, *, messages: list[Message] | list[TopicPartition]) -> None:
+    async def _ack_messages(
+        self, *, messages: list[Message] | list[TopicPartition]
+    ) -> None:
         offsets = self._calculate_offsets(messages)
         try:
             # TODO: Always store + commit, feels excessive here after refactoring.
             await self.consumer.store_offsets(offsets=offsets)
             result = await self.consumer.commit(asynchronous=self.async_commit)
-            failed_tp = [tp.error() for tp in result if tp.error is not None]
-            if failed_tp:
-                # TODO: Doing anything meaningful here is maybe difficult.
-                raise # (TODO: Crash)
+            # These are only returned during `synchronous` commits, otherwise the commit result
+            # will always be `None`.
+            topic_partition_commit_errors = [
+                tp.error() for tp in result if tp.error is not None
+            ]
+            if topic_partition_commit_errors:
+                for tp in topic_partition_commit_errors:
+                    self._log_kafka_exception(tp)
+                raise  # (TODO: Crash)
         except KafkaException as exc:
             self._log_kafka_exception(exc)
-            raise # (TODO: Crash)
+            raise  # (TODO: Crash)
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
