@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import typing
@@ -223,6 +224,8 @@ class AsyncKafkaConsumer:
         # TODO: Let's make it 'optional', if the user wants to opt in - use it.
         # user_cfg["group.protocol"] = "consumer"
         user_cfg.setdefault("error_cb", self.error_cb)
+        if self.async_commit:
+            user_cfg.setdefault("on_commit", self.on_commit)
         if options := parse_debug_options(self.debug):
             user_cfg.setdefault("debug", options)
         return user_cfg
@@ -278,7 +281,7 @@ class AsyncKafkaConsumer:
                 )
 
                 # TODO: This does not honour task_mode, its always (topic, partition) atm.
-                topic_partition_results = await self._process(grouped_messages)
+                topic_partition_results = await self._dispatch(grouped_messages)
 
                 # process the user batch handler results, enforcing complex logic to derive the
                 # blocked, successful and poisoned offsets that can actually be stored.
@@ -386,7 +389,7 @@ class AsyncKafkaConsumer:
                     applicable_messages.append(message)
         return applicable_messages
 
-    def _log_kafka_exception(self, exc: KafkaException | KafkaException) -> None:
+    def _log_kafka_exception(self, exc: KafkaException | KafkaError) -> None:
         """_log_kafka_error unwraps a KafkaException and logs information about the
         underlying KafkaError.  In some cases, such as synchronous commit failures
         TopicPartition types are returned and their error is a KafkaError explicitly.
@@ -406,11 +409,26 @@ class AsyncKafkaConsumer:
             },
         )
 
-    async def _process(
+    async def _dispatch(
         self,
         grouped_messages: GroupedMessagesType,
     ) -> list[HandlerResultContext | Exception]:
-        """_process fans out the batches appropriately and collects results."""
+        """_dispatch is responsible for invoking the users handler code, which depending on configuration
+        can be called with:
+
+         * An asyncio task per topic (mixed partitions)
+         * An asyncio task per (topic, partition) pair
+
+        Each invocation of the handler function is injected a `KafkacContext` which the handler function
+        should use to report message status/results back to the core consumer loop to act upon later.
+
+        # TODO: Most efficiency algorithm(s)
+        # TODO: Next Hop support
+        # TODO: Allow retry at the handler level func (tenacity?)
+        # TODO: Support `Task Mode` to customise handler scope/behaviour
+        # TODO: Lock down the api in terms of what is available to users.
+
+        """
         tasks: list[asyncio.Task] = []  # order is important here.
         for key, partition_messages in grouped_messages.items():
             topic, partition = key
@@ -551,17 +569,20 @@ class AsyncKafkaConsumer:
             # TODO: Always store + commit, feels excessive here after refactoring.
             await self.consumer.store_offsets(offsets=offsets)
             result = await self.consumer.commit(asynchronous=self.async_commit)
-            # These are only returned during `synchronous` commits, otherwise the commit result
-            # will always be `None`.
-            topic_partition_commit_errors = [
-                tp.error() for tp in result if tp.error is not None
-            ]
-            if topic_partition_commit_errors:
-                for tp in topic_partition_commit_errors:
-                    self._log_kafka_exception(tp)
-                raise  # (TODO: Crash)
+            self._inspect_failed_partitions(result)
         except KafkaException as exc:
             self._log_kafka_exception(exc)
+            raise  # (TODO: Crash)
+
+    def _inspect_failed_partitions(self, failed_tp: list[TopicPartition]) -> None:
+        # These are only returned during `synchronous` commits, otherwise the commit result
+        # will always be `None`.
+        topic_partition_commit_errors = [
+            tp.error for tp in failed_tp if tp.error is not None
+        ]
+        if topic_partition_commit_errors:
+            for tp in topic_partition_commit_errors:
+                self._log_kafka_exception(tp)
             raise  # (TODO: Crash)
 
     async def _on_assign(
@@ -606,7 +627,7 @@ class AsyncKafkaConsumer:
             await self.consumer.commit(asynchronous=False)
         except KafkaException as exc:
             err: KafkaError = exc.args[0]
-            if err.code() == "-168":
+            if err.code() == KafkaError._NO_OFFSET:
                 # It's possible, rebalances can happen when no messages have actually been stored.
                 # when auto store offsets is off.
                 pass
@@ -619,6 +640,15 @@ class AsyncKafkaConsumer:
         taken.  If the user does not specify one in their config, this will be
         used instead."""
         self.consumer_logger.error("received transient error: %s", err)
+
+    def on_commit(self, err: KafkaError, tp: list[TopicPartition]) -> None:
+        """on_commit is a callback which is triggered during commits when async commit is
+        used."""
+        if err is not None:
+            self._log_kafka_exception(err)
+        if tp:
+            with contextlib.suppress(KafkaException):
+                self._inspect_failed_partitions(tp)
 
     async def stop(self, wait: bool = True) -> None:
         """stop signals that the consumer should begin a graceful shutdown.
