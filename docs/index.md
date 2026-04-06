@@ -16,7 +16,7 @@ configurations and implement a `handler` for processing your messages.
  - Multiple topic, batch consumption.
  - Header level filtering with baked in common filters.
  - `Next-Hop` support to enqueue transient failures into retry or dead letter queues.
- - Head of queue blocking (use with cautious).
+ - Head of queue blocking (use with caution).
  - Automatic deserialisation to pydantic models based on `version` headers.
  - Much more...
 
