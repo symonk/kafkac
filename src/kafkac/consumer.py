@@ -543,18 +543,16 @@ class AsyncKafkaConsumer:
 
         return highest_offsets
 
-    async def _commit(self, *, asynchronous: bool) -> None:
-        out = await self.consumer.commit(asynchronous=asynchronous)
-        failed = [tp.error() for tp in out if tp.error is not None]
-        if failed:
-            # TODO: Remove later
-            raise Exception("some partitions failed")
-
     async def _ack_messages(self, *, messages: list[Message] | list[TopicPartition]) -> None:
         offsets = self._calculate_offsets(messages)
         try:
+            # TODO: Always store + commit, feels excessive here after refactoring.
             await self.consumer.store_offsets(offsets=offsets)
-            await self.consumer.commit(asynchronous=self.async_commit)
+            result = await self.consumer.commit(asynchronous=self.async_commit)
+            failed_tp = [tp.error() for tp in result if tp.error is not None]
+            if failed_tp:
+                # TODO: Doing anything meaningful here is maybe difficult.
+                raise # (TODO: Crash)
         except KafkaException as exc:
             self._log_kafka_exception(exc)
             raise # (TODO: Crash)
