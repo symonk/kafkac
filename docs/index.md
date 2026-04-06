@@ -18,6 +18,8 @@ configurations and implement a `handler` for processing your messages.
  - `Next-Hop` support to enqueue transient failures into retry or dead letter queues.
  - Head of queue blocking (use with caution).
  - Automatic deserialisation to pydantic models based on `version` headers.
+ - DLQ processing support (process messages and exit when all partitions are EOF).
+ - Retry queue support (processing messages based on a `schedule` marked by message header timestamps)
  - Much more...
 
 ---

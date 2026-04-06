@@ -1,7 +1,7 @@
 from confluent_kafka import Message
 
 from .handler import MessagesHandlerFunc
-from .result import HandlerResultContext
+from .result import KafkacContext
 
 
 class BatchedWrappedUnhandledException(Exception):
@@ -21,15 +21,13 @@ class BatchedWrappedUnhandledException(Exception):
 
 # TODO: Improve/implement
 async def process_batch(
-    context: HandlerResultContext,
+    context: KafkacContext,
     messages: list[Message],
     handler: MessagesHandlerFunc,
-) -> HandlerResultContext:
+) -> KafkacContext:
     """processor is responsible for processing messages received by the consumer
     for individual partitions."""
     try:
         return await handler(context, messages)
     except Exception as exc:
-        raise BatchedWrappedUnhandledException(
-            topic=context.topic, partition=context.partition, exc=exc
-        ) from exc
+        raise BatchedWrappedUnhandledException(topic=context.topic, exc=exc) from exc

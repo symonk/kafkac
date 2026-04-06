@@ -21,12 +21,13 @@ from .exception import NoConsumerGroupIdProvidedException
 from .exception import PoisonedMessagesWithNowhereToGoException
 from .exception import UnsupportedMessagingGroupException
 from .grouping import GroupRegistry
+from .grouping import TaskModeRegistry
+from .grouping import WrappedTask
 from .handler import MessagesHandlerFunc
-from .result import HandlerResultContext
+from .result import KafkacContext
 from .retry import RetryConfig
 from .retry import RetryRouter
 from .worker import BatchedWrappedUnhandledException
-from .worker import process_batch
 
 # add a non-intrusive logger, allowing clients to view some useful information
 # but not getting in their way if they do not specify their own user_logger.
@@ -80,7 +81,7 @@ class AsyncKafkaConsumer:
     def __init__(
         self,
         *,
-        handler_func: MessagesHandlerFunc,
+        handler_func: MessagesHandlerFunc,  # TODO: Align this with refactor.
         config: dict[str, typing.Any],
         batch_size: int,
         topic_regexes: list[str],
@@ -223,9 +224,9 @@ class AsyncKafkaConsumer:
         # TODO: We can't enforce this really, it requires broker side config
         # TODO: Let's make it 'optional', if the user wants to opt in - use it.
         # user_cfg["group.protocol"] = "consumer"
-        user_cfg.setdefault("error_cb", self.error_cb)
+        user_cfg.setdefault("error_cb", self._error_cb)
         if self.async_commit:
-            user_cfg.setdefault("on_commit", self.on_commit)
+            user_cfg.setdefault("on_commit", self._on_commit)
         if options := parse_debug_options(self.debug):
             user_cfg.setdefault("debug", options)
         return user_cfg
@@ -273,15 +274,10 @@ class AsyncKafkaConsumer:
                     await self._ack_messages(messages=messages)
                     continue
 
-                # based on user configuration, group the messages into either
-                # a dict of topic: list[Message] OR
-                # a dict of (topic, partition): list[Message]
-                grouped_messages: GroupedMessagesType = self._message_grouper_func(
-                    applicable_messages
+                # dispatch the messages asynchronously based on self.task_mode
+                topic_partition_results = await self._dispatch(
+                    messages=applicable_messages
                 )
-
-                # TODO: This does not honour task_mode, its always (topic, partition) atm.
-                topic_partition_results = await self._dispatch(grouped_messages)
 
                 # process the user batch handler results, enforcing complex logic to derive the
                 # blocked, successful and poisoned offsets that can actually be stored.
@@ -411,8 +407,9 @@ class AsyncKafkaConsumer:
 
     async def _dispatch(
         self,
-        grouped_messages: GroupedMessagesType,
-    ) -> list[HandlerResultContext | Exception]:
+        *,
+        messages: list[Message],
+    ) -> list[KafkacContext | Exception]:
         """_dispatch is responsible for invoking the users handler code, which depending on configuration
         can be called with:
 
@@ -427,30 +424,31 @@ class AsyncKafkaConsumer:
         # TODO: Allow retry at the handler level func (tenacity?)
         # TODO: Support `Task Mode` to customise handler scope/behaviour
         # TODO: Lock down the api in terms of what is available to users.
+        # TODO: Semaphore style support, what if someone has 10k partitions and doesnt want
+        # 10k IO operations etc.
+
+        Depending on `self.task_mode` messages are grouped into the following combinations and
+        an async task per combination is spawned:
 
         """
-        tasks: list[asyncio.Task] = []  # order is important here.
-        for key, partition_messages in grouped_messages.items():
-            topic, partition = key
-            ctx = HandlerResultContext(topic=topic, partition=partition)
-            tasks.append(
-                asyncio.create_task(
-                    process_batch(
-                        ctx,
-                        partition_messages,
-                        self.handler_func,
-                    )
-                )
-            )
-        # TODO: Allow user controlled semaphore if they have massive (topic, partition) combinations.
-        # TODO: On unhandled exceptions, allow user controlled behaviour (Reseek vs Retry/DLQ)?
-        topic_partition_results: list[
-            HandlerResultContext | BaseException
-        ] = await asyncio.gather(*tasks, return_exceptions=True)
-        return topic_partition_results
+        # TODO: What should be injected into the handler func?
+        # TODO: Can we attach the context to the underlying Task as metadata?
+        # TODO: Typing is all wrong here, fix it all up
+        task_generator = TaskModeRegistry.get(self.task_mode)
+        wrapped_tasks: list[WrappedTask] = task_generator.handle(messages)
+        tasks = [t.task for t in wrapped_tasks]
+        task_map = {t.task: t.context for t in wrapped_tasks}
+
+        results: list[KafkacContext] = []
+        async for task in asyncio.as_completed(tasks):
+            # TODO: Unhandled exceptions? (Batch Wrapper?)
+            # TODO: Context being aware of next hops?
+            result = task_map[task]
+            ...
+        return results
 
     async def _process_results(
-        self, results: list[HandlerResultContext]
+        self, results: list[KafkacContext]
     ) -> tuple[list[TopicPartition], list[TopicPartition]]:
         """_process_results parses the user results provided by upto N batched handler functions.  This
         function is responsible for preventing user error and potential message loss.  It has a complex
@@ -476,7 +474,7 @@ class AsyncKafkaConsumer:
                             partition=msg.partition(),
                             offset=msg.offset(),
                         )
-                        for msg in result.succeeded
+                        for msg in result._successes
                     ]
                 )
                 blocked_partitions.extend(
@@ -634,14 +632,14 @@ class AsyncKafkaConsumer:
         # TODO: KIP-848 incremental unassign?
         # await self.consumer.incremental_unassign(partitions)
 
-    def error_cb(self, err: KafkaError) -> None:
+    def _error_cb(self, err: KafkaError) -> None:
         """error_cb is the default handle for global errors.  Importantly these
         errors are pretty much informative and no real action should need to be
         taken.  If the user does not specify one in their config, this will be
         used instead."""
         logger.error("received transient error: %s", err)
 
-    def on_commit(self, err: KafkaError, tp: list[TopicPartition]) -> None:
+    def _on_commit(self, err: KafkaError, tp: list[TopicPartition]) -> None:
         """on_commit is a callback which is triggered during commits when async commit is
         used."""
         if err is not None:
@@ -657,12 +655,3 @@ class AsyncKafkaConsumer:
         if wait:
             while not self.done:
                 await asyncio.sleep(0.1)
-
-    async def __aenter__(self) -> typing.Self:
-        """__enter__ allows the KafkaConsumer instance to be used as a context
-        manager, guaranteeing its graceful exit and teardown."""
-        await self.consume()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self.stop()

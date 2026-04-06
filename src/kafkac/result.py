@@ -3,71 +3,53 @@ from dataclasses import field
 
 from confluent_kafka import Message
 
+from .exception import PoisonedMessagesWithNowhereToGoException
+
 
 @dataclass
-class HandlerResultContext:
-    """PartitionResult encapsulates the processing of the messages for a single
-    partition within a topic.
+class KafkacContext:
+    """KafkacContext is injected into user supplied handler function and is used to mark
+    (at present) messages into three buckets:
 
-    The highest_committable should be set to the last message that was successfully
-    handled during processing.  This allows the consumer to short circuit and commit
-    a single message to cover successes, as anything before it is implicit.
+     * successful - processed successfully and eligible for committing.
+     * next-hop - failed and should be forwarded to a retry/dead-letter queue or store.
+     * blocked - should head of queue block the partition, reseek it to retry the message next iteration.
 
-    The PartitionResult also includes a breakdown of Messages:
-        * succeeded - messages that were successfully processed
-        * blocked - transient failures, that should be retried next poll
-        * poisoned - Messages that should be forwarded to a 'next hop' queue/store.
+    Note: `blocked` is not supported fully yet (and likely may be dropped as a concept).
     """
 
     topic: str
-    partition: int
-    succeeded: list[Message] = field(default_factory=list)
-    blocked: list[Message] = field(default_factory=list)
-    poisoned: list[Message] = field(default_factory=list)
+    messages: list[Message]
+    hoppable: bool
+    _successes: list[Message] = field(default_factory=list)
+    _poisoned: list[Message] = field(default_factory=list)
+    _blocked: list[Message] = field(default_factory=list)
 
-    def store_success(self, message: Message) -> None:
-        self.succeeded.append(message)
+    def mark_successful(self, message: Message) -> None:
+        self._successes.append(message)
 
-    def store_successes(self, messages: list[Message]) -> None:
-        self.succeeded.extend(messages)
+    def mark_poisoned(self, message: Message) -> None:
+        if not self.hoppable:
+            raise PoisonedMessagesWithNowhereToGoException(
+                "cannot mark messages poisoned without configuring retry queues."
+            )
+        self._poisoned.append(message)
 
-    def store_block(self, message: Message) -> None:
-        self.blocked.append(message)
-
-    def store_blocks(self, messages: list[Message]) -> None:
-        self.blocked.extend(messages)
-
-    def store_poisoned(self, message: Message) -> None:
-        self.poisoned.append(message)
+    def mark_blocked(self, message: Message) -> None:
+        self._blocked.append(message)
 
     @property
     def all_success(self) -> bool:
         """success indicates if the entire batch was a success without any blocked
         or dead letter partitions"""
         return (
-            bool(self.succeeded) and not bool(self.poisoned) and not bool(self.blocked)
+            bool(self._successes)
+            and not bool(self._poisoned)
+            and not bool(self._blocked)
         )
 
     @property
     def should_dead_letter(self) -> bool:
         """should_dead_letter implies there were fatal failures in the batch
         and those should be treated as such."""
-        return bool(self.poisoned)
-
-    @property
-    def all_reseek(self) -> bool:
-        """all_transient implies all partitions are blocked but not in a fatal enough way
-        to dead letter."""
-        return (
-            not bool(self.all_success)
-            and not bool(self.poisoned)
-            and bool(self.blocked)
-        )
-
-    @property
-    def all_dead_lettered(self) -> bool:
-        """all_dead_lettered implies all partitions are blocked but not in a
-        fatal way, messages require dead letter queueing."""
-        return (
-            bool(self.poisoned) and not bool(self.blocked) and not bool(self.succeeded)
-        )
+        return bool(self._poisoned)

@@ -7,7 +7,7 @@ import pytest
 from confluent_kafka import Message
 
 from kafkac import AsyncKafkaConsumer
-from kafkac.handler import HandlerResultContext
+from kafkac.handler import KafkacContext
 
 from ..test_utils import get_committed_messages_for_topic
 
@@ -15,15 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 async def successful_test_handler(
-    ctx: HandlerResultContext, messages: list[Message]
-) -> HandlerResultContext:
+    ctx: KafkacContext, messages: list[Message]
+) -> KafkacContext:
     ctx.store_successes(messages)
     return ctx
 
 
 async def head_of_queue_block_handler(
-    ctx: HandlerResultContext, messages: list[Message]
-) -> HandlerResultContext:
+    ctx: KafkacContext, messages: list[Message]
+) -> KafkacContext:
     ctx.store_blocks(messages)
     return ctx
 
