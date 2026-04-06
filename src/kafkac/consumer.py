@@ -398,7 +398,7 @@ class AsyncKafkaConsumer:
 
         """
         err: KafkaError = exc.args[0] if isinstance(exc, KafkaException) else exc
-        self.consumer_logger.error(
+        logger.error(
             "failed to subscribe to topics",
             extra={
                 "topics": self.topics_regexes,
@@ -595,7 +595,7 @@ class AsyncKafkaConsumer:
             for partition in partitions:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].add(partition)
-            self.consumer_logger.debug(
+            logger.debug(
                 "consumer was assigned new partitions: (before=%s), (after=%s)",
                 before,
                 self.assigned_partitions,
@@ -615,7 +615,7 @@ class AsyncKafkaConsumer:
             for partition in partitions:
                 topic, partition = partition.topic, partition.partition
                 self.assigned_partitions[topic].discard(partition)
-            self.consumer_logger.debug(
+            logger.debug(
                 "consumer had partitions revoked: (before=%s), (after=%s)",
                 before,
                 self.assigned_partitions,
@@ -639,7 +639,7 @@ class AsyncKafkaConsumer:
         errors are pretty much informative and no real action should need to be
         taken.  If the user does not specify one in their config, this will be
         used instead."""
-        self.consumer_logger.error("received transient error: %s", err)
+        logger.error("received transient error: %s", err)
 
     def on_commit(self, err: KafkaError, tp: list[TopicPartition]) -> None:
         """on_commit is a callback which is triggered during commits when async commit is
