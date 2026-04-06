@@ -11,14 +11,14 @@ configurations and implement a `handler` for processing your messages.
 
 ### ⚙️ Core Features
 
-- ⚡️ Async API
-- 🧬 Automatic Pydantic serialisation supported based on `version` headers
-- 🛡 Robust error handling for stability.
-- 📦 Multi topic, batch consumption.
-- 🧾 Message header filtering support with baked in common filters.
-- 🪦 `next-hop` support for retry queue/dlq enqueuing for transient failures.
-- 🔁 Supports `head-of-queue` blocking (if desirable)
-- ✨ More...
+ - Fully `asynchronous` API.
+ - Robust retrying and error handling for stability.
+ - Multiple topic, batch consumption.
+ - Header level filtering with baked in common filters.
+ - `Next-Hop` support to enqueue transient failures into retry or dead letter queues.
+ - Head of queue blocking (use with cautious).
+ - Automatic deserialisation to pydantic models based on `version` headers.
+ - Much more...
 
 ---
 
@@ -27,33 +27,15 @@ configurations and implement a `handler` for processing your messages.
 In terms of usability, implementing your own consumer is straight forward, you should:
 
 * Build your appropriate `librdkafka` configuration for the consumer.
-* Decide how you would like your messages delivered your handler (ProcessingOpts).
-* Implement an async handler for those messages.
-* Decide how ordering should (or shouldn't be managed)
-* Populate success/failure of messages within the handler injected context.
-* Decide (Optionally) if you would like retry queue/DLQ and provide a `RetryConfig` for those.
+* Decide how you would like your messages delivered your handler (task_mode).
+* Configure a `next-hop` for a retry or dead letter queue for transient failures.
+* Implement an async handler for those messages (honour order if you see fit).
+* Report back to Kafkac success and failures via the `context`.
 * Kafkac will handle the rest, taking care of all the semantics and edge cases.
 
 
 ```python
-import asyncio
-
-from kafkac import AsyncKafkaConsumer
-from kafkac import HandlerResultContext
-from confluent_kafka import Message
-
-
-async def handler(messages: list[Message]) -> HandlerResultContext:
-    return HandlerResultContext(succeeded=messages)
-
-
-async def main():
-    print("implement later")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-
+...
 ```
 
 ---
