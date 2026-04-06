@@ -231,12 +231,8 @@ class AsyncKafkaConsumer:
         """consume signals the consumer to actually begin.  This is implicit
         when KafkaConsumer is used as a context manager."""
         try:
-            try:
-                await self._subscribe()
-            except KafkaException as exc:
-                raise  # (TODO: Crash)
-
             self.running = True
+            await self._subscribe()
 
             while not self.interrupted:
                 # fetch a batch of messages from the subscribed topic(s).  Using consume
@@ -270,16 +266,9 @@ class AsyncKafkaConsumer:
                 if not applicable_messages:
                     # the entire batch was 'filtered' out by the user.
                     # safe to store and commit all before continuing.
-                    # TODO: commit() is enough in these cases, no need to store, pass partitions to commit()
                     # (TODO: Crash)
-                    try:
-                        await self._store_messages(messages)
-                        await self._commit(asynchronous=self.async_commit)
-                    except KafkaException as exc:
-                        self._log_kafka_exception(exc)
-                        raise
-                    else:
-                        continue
+                    await self._ack_messages(messages=messages)
+                    continue
 
                 # based on user configuration, group the messages into either
                 # a dict of topic: list[Message] OR
@@ -333,7 +322,7 @@ class AsyncKafkaConsumer:
                         await self.consumer.seek(blocked_partition)
                     except KafkaException as exc:
                         self._log_kafka_exception(exc)
-                        raise
+                        raise # (TODO: Crash)
 
                 # Finally commit the successful offsets, for an individual partition, the max offset here will
                 # be no greater than either: A) The max of the initial polled messages (if no blocks occur) or
@@ -343,13 +332,7 @@ class AsyncKafkaConsumer:
                 # A) Successfully enqueued, and included in successful_partitions.
                 # B) Failed to enqueue and configured to crash the consumer.
                 # C) Failed to enqueue and configured to HOQ block in which case they will be in blocked above.
-                # TODO: commit() is sufficient here with offsets
-                try:
-                    await self._store_messages(messages=successful_partitions)
-                    await self._commit(asynchronous=self.async_commit)
-                except KafkaException as exc:
-                    self._log_kafka_exception(exc)
-                    raise  # (TODO: Crash)
+                await self._ack_messages(messages=successful_partitions)
         except Exception:
             raise
         finally:
@@ -518,12 +501,12 @@ class AsyncKafkaConsumer:
 
         return successful_partitions, blocked_partitions
 
-    async def _store_messages(
-        self,
+    @staticmethod
+    def _calculate_offsets(
         messages: list[Message] | list[TopicPartition],
-    ) -> None:
+    ) -> list[TopicPartition]:
         """
-        _store_messages calculates the highest per (topic, partition) from a grouping of messages
+        _calculate_offsets calculates the highest per (topic, partition) from a grouping of messages
         and stores those offsets in a single call.
 
         Storing a single value for each partition is sufficient, and the values stored should be the
@@ -532,6 +515,9 @@ class AsyncKafkaConsumer:
         :param messages: The messages to store.  These can either be a confluent kafka Message type
         in which case the topic/partition are callable methods and invoked, or a list of `TopicPartition`
         objects.
+
+        :returns: The list of TopicPartitions that are `committable`.  Typically, a single TopicPartition
+        for each (topic, partition) in scope of this consumer instance.
         """
 
         # calculate the highest (max) offset to commit based on each (topic, partition) combination
@@ -555,11 +541,7 @@ class AsyncKafkaConsumer:
             for (topic, partition), offset in offsets_to_commit.items()
         ]
 
-        await self._store_offsets(offsets=highest_offsets)
-
-    async def _store_offsets(self, offsets: list[TopicPartition]):
-        """_store_offsets stores the offsets locally ready for committing in the future."""
-        await self.consumer.store_offsets(offsets=offsets)
+        return highest_offsets
 
     async def _commit(self, *, asynchronous: bool) -> None:
         out = await self.consumer.commit(asynchronous=asynchronous)
@@ -567,6 +549,15 @@ class AsyncKafkaConsumer:
         if failed:
             # TODO: Remove later
             raise Exception("some partitions failed")
+
+    async def _ack_messages(self, *, messages: list[Message] | list[TopicPartition]) -> None:
+        offsets = self._calculate_offsets(messages)
+        try:
+            await self.consumer.store_offsets(offsets=offsets)
+            await self.consumer.commit(asynchronous=self.async_commit)
+        except KafkaException as exc:
+            self._log_kafka_exception(exc)
+            raise # (TODO: Crash)
 
     async def _on_assign(
         self, _: AIOConsumer, partitions: list[TopicPartition]
