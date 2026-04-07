@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from confluent_kafka import Message
 
-from kafkac import KafkacContext
-from kafkac.worker import process_batch
+from .result import KafkacContext
+from .worker import batch_coro
 
 
 @dataclass
@@ -28,6 +28,7 @@ class TaskGenerator(typing.Protocol):
     def handle(self, messages: list[Message]) -> list[WrappedTask]: ...
 
 
+@dataclass
 class TaskModeStrategy:
     """TaskModeStrategy encapsulates the functions required for supporting
     different `task_mode` style strategies.  These are responsible for
@@ -35,8 +36,8 @@ class TaskModeStrategy:
     the processing as well as providing the function for instantiating the
     asyncio tasks to be fanned out."""
 
-    grouping: Callable[list[Message]]
-    task_generator: Callable[list[Message]]
+    grouping: Callable[[list[Message]], ...]
+    task_generator: Callable[[list[Message]], ...]
 
 
 class TopicStrategy:
@@ -44,10 +45,11 @@ class TopicStrategy:
     task is spawned for each individual topic the consumer is subscribed too, regardless of
     the number of partitions returned by a poll()."""
 
-    def __init__(self, task_mode: str, hoppable: bool, handler: typing.Any):
+    def __init__(self, task_mode: str, hoppable: bool, handler: typing.Any, retry_cfg):
         self.task_mode = task_mode
         self.hoppable = hoppable
         self.handler = handler
+        self.retry_cfg = retry_cfg
 
     def handle(self, messages: list[Message]) -> list[WrappedTask]:
         tasks: list[WrappedTask] = []
@@ -64,12 +66,15 @@ class PartitionStrategy:
     resulting in an asyncio task spawned for each (topic, partition) assigned to this particular
     consumer."""
 
-    def __init__(self, task_mode: str, hoppable: bool, handler: typing.Any) -> None:
+    def __init__(
+        self, task_mode: str, hoppable: bool, handler: typing.Any, retry_cfg
+    ) -> None:
         self.task_mode = task_mode
         self.hoppable = hoppable
         self.handler = handler
+        self.retry_cfg = retry_cfg
 
-    def handler(self, messages: list[Message]) -> list[WrappedTask]:
+    def handle(self, messages: list[Message]) -> list[WrappedTask]:
         tasks: list[WrappedTask] = []
 
         # group messages into per topic combinations and create tasks for them.
@@ -85,8 +90,11 @@ class PartitionStrategy:
                 WrappedTask(
                     context=context,
                     task=asyncio.create_task(
-                        process_batch(
-                            context=context, messages=messages, handler=self.handler
+                        batch_coro(
+                            context=context,
+                            messages=messages,
+                            handler=self.handler,
+                            retries=self.retry_cfg,
                         )
                     ),
                 )
@@ -133,7 +141,7 @@ GroupRegistry = {
     "topic": group_messages_by_topic,
 }
 
-TaskModeRegistry: dict[str, TaskGenerator] = {
+TaskModeRegistry: dict[str, type[PartitionStrategy | TopicStrategy]] = {
     "partition": PartitionStrategy,
     "topic": TopicStrategy,
 }

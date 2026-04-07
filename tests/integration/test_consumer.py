@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 async def successful_test_handler(
     ctx: KafkacContext, messages: list[Message]
 ) -> KafkacContext:
-    ctx.store_successes(messages)
+    ctx.mark_successful(messages)
     return ctx
 
 

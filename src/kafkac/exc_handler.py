@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
-class BatchExcHandler:
+class BatchRetrier:
     """BatchRetry denotes what to do if a batch handler function raises an unhandled
     exception."""
 

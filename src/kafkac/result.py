@@ -21,35 +21,42 @@ class KafkacContext:
     topic: str
     messages: list[Message]
     hoppable: bool
-    _successes: list[Message] = field(default_factory=list)
-    _poisoned: list[Message] = field(default_factory=list)
-    _blocked: list[Message] = field(default_factory=list)
+    successes: list[Message] = field(default_factory=list)
+    poisoned: list[Message] = field(default_factory=list)
+    blocked: list[Message] = field(
+        default_factory=list
+    )  # TODO: Consider removing concept.
 
     def mark_successful(self, message: Message) -> None:
-        self._successes.append(message)
+        self.successes.append(message)
+
+    def mark_successful_many(self, messages: list[Message]) -> None:
+        self.successes.extend(messages)
 
     def mark_poisoned(self, message: Message) -> None:
         if not self.hoppable:
             raise PoisonedMessagesWithNowhereToGoException(
                 "cannot mark messages poisoned without configuring retry queues."
             )
-        self._poisoned.append(message)
+        self.poisoned.append(message)
 
     def mark_blocked(self, message: Message) -> None:
-        self._blocked.append(message)
+        self.blocked.append(message)
+
+    @property
+    def has_forwards(self) -> bool:
+        return len(self.poisoned) > 0
 
     @property
     def all_success(self) -> bool:
         """success indicates if the entire batch was a success without any blocked
         or dead letter partitions"""
         return (
-            bool(self._successes)
-            and not bool(self._poisoned)
-            and not bool(self._blocked)
+            bool(self.successes) and not bool(self.poisoned) and not bool(self.blocked)
         )
 
     @property
     def should_dead_letter(self) -> bool:
         """should_dead_letter implies there were fatal failures in the batch
         and those should be treated as such."""
-        return bool(self._poisoned)
+        return bool(self.poisoned)

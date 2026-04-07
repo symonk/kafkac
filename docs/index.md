@@ -20,6 +20,7 @@ configurations and implement a `handler` for processing your messages.
  - Automatic deserialisation to pydantic models based on `version` headers.
  - DLQ processing support (process messages and exit when all partitions are EOF).
  - Retry queue support (processing messages based on a `schedule` marked by message header timestamps)
+ - `ConsumerGroup` concept that leverages multiple cores to run multiple `AsyncKafkaConsumer` instances.
  - Much more...
 
 ---

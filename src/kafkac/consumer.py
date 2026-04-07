@@ -15,18 +15,16 @@ from kafkac.filters import FilterFunc
 from kafkac.filters import discard_message
 
 from .debug import parse_debug_options
-from .exc_handler import BatchExcHandler
+from .exc_handler import BatchRetrier
 from .exception import InvalidHandlerFunctionException
 from .exception import NoConsumerGroupIdProvidedException
-from .exception import PoisonedMessagesWithNowhereToGoException
 from .exception import UnsupportedMessagingGroupException
 from .grouping import GroupRegistry
 from .grouping import TaskModeRegistry
 from .grouping import WrappedTask
 from .handler import MessagesHandlerFunc
 from .result import KafkacContext
-from .retry import RetryConfig
-from .retry import RetryRouter
+from .retry.requeue import Forwarder
 from .worker import BatchedWrappedUnhandledException
 
 # add a non-intrusive logger, allowing clients to view some useful information
@@ -87,7 +85,7 @@ class AsyncKafkaConsumer:
         topic_regexes: list[str],
         poll_interval: float = 0.1,
         filter_funcs: dict[str, list[FilterFunc]] | None = None,
-        retry_cfg: RetryConfig | None = None,
+        forwarder: Forwarder | None = None,
         batch_timeout: float = 60.0,  # TODO: Should probably be None if not specified.
         async_commit: bool = False,
         max_workers: int = min(32, (os.cpu_count() or 1) + 4),
@@ -96,10 +94,7 @@ class AsyncKafkaConsumer:
         consumer_logger: logging.Logger = logger,
         bound_concurrency: int = 0,
         task_mode: typing.Literal["topic", "partition"] = "partition",
-        batch_exc_handler: BatchExcHandler = BatchExcHandler(
-            retries=0,
-            on=tuple(),
-        ),
+        batch_retry_cfg: BatchRetrier | None = None,
     ) -> None:
         if not isinstance(handler_func, MessagesHandlerFunc):
             raise InvalidHandlerFunctionException(
@@ -142,7 +137,7 @@ class AsyncKafkaConsumer:
         self.filter_funcs = filter_funcs
         # an (optional) dead letter queue topic.  For now this only supports the same cluster
         # but will widen substantially in the future.
-        self.retrier = RetryRouter(retry_cfg=retry_cfg) if retry_cfg else None
+        self.forwarder = forwarder
         # how many workers the thread pool can utilise when calling confluent kafka messages
         # that would block the event loop.
         # use the internal heuristic from std python, AIOConsumer does not expose it by default.
@@ -189,7 +184,8 @@ class AsyncKafkaConsumer:
         # This is influenced by `task_mode`.
         self._message_grouper_func = GroupRegistry[self.task_mode]
         # configure behaviour if an unhandled exception leaks out of the batch handler.
-        self.batch_exc_handler = batch_exc_handler
+        # TODO: Implement this whole concept, out of scope for now.
+        self.batch_retry_cfg = batch_retry_cfg
 
         # -- Order is important below here, at least temporarily, do not append attributes until fixed --
 
@@ -206,6 +202,10 @@ class AsyncKafkaConsumer:
         )
         # track when the consumer.consume loop has finalized and is finished/exited.
         self.done = False
+
+    @property
+    def can_forward(self) -> bool:
+        return self.forwarder is not None
 
     def _prepare_cfg(
         self,
@@ -275,38 +275,11 @@ class AsyncKafkaConsumer:
                     continue
 
                 # dispatch the messages asynchronously based on self.task_mode
-                topic_partition_results = await self._dispatch(
+                successful_partitions, blocked_partitions = await self._dispatch(
                     messages=applicable_messages
                 )
 
-                # process the user batch handler results, enforcing complex logic to derive the
-                # blocked, successful and poisoned offsets that can actually be stored.
-                # Note: For developers changing these concepts, be very careful - the decision tree is very nuanced
-                # and is extremely prone to mistakes, resulting in disastrous outcomes for users.
-                #
-                # blocked_partitions denotes which partitions should be 'blocked', if there are any blocked
-                # partitions, kafkac will sort the offsets for the partition up until the blocked offset.
-                # those will be `stored`, and the 'blocked' case will be 're-seeked'.  What this means is,
-                # next polls() will return those messages AGAIN.  Be careful when using this as it may not be
-                # what you want.  The preferred approach would be to mark such messages as `poisoned` (below)
-                # and have them enqueued somewhere else for processing in the future.  Using `blocked` here will
-                # cause head-of-queue blocking on that partition, this may be desirable in some cases (such as
-                # external systems completely down, that would result in mass dead lettering etc., but be very
-                # careful that in how you make those decisions.
-
-                # successful_partitions will have all their offsets stored and commited, kafkac will ensure no
-                # blocked offsets are 'intermingled' within these (or poisoned messages) to ensure user error
-                # does not result in message loss.
-
-                # poisoned_messages denotes messages that are technically successful, but only if the action of
-                # actually enqueueing them is successful.  If configured to move messages forward (for transient
-                # failures) to something like a retry queue or DLQ, kafkac will attempt to publish them.  Initially
-                # only a kafka topic will be supported, but future plugins will exist such as SQS.
-
-                successful_partitions, blocked_partitions = await self._process_results(
-                    topic_partition_results
-                )
-
+                # TODO: Bug in TopicPartition ordering etc. (handler fan out - do we need to sort?)
                 if not successful_partitions and not blocked_partitions:
                     raise RuntimeError(
                         "Kafkac internal bug - please open an issue @ https://github.com/symonk/kafkac/issues"
@@ -409,7 +382,7 @@ class AsyncKafkaConsumer:
         self,
         *,
         messages: list[Message],
-    ) -> list[KafkacContext | Exception]:
+    ) -> tuple[list[TopicPartition], list[TopicPartition]]:
         """_dispatch is responsible for invoking the users handler code, which depending on configuration
         can be called with:
 
@@ -419,103 +392,62 @@ class AsyncKafkaConsumer:
         Each invocation of the handler function is injected a `KafkacContext` which the handler function
         should use to report message status/results back to the core consumer loop to act upon later.
 
-        # TODO: Most efficiency algorithm(s)
-        # TODO: Next Hop support
-        # TODO: Allow retry at the handler level func (tenacity?)
-        # TODO: Support `Task Mode` to customise handler scope/behaviour
-        # TODO: Lock down the api in terms of what is available to users.
-        # TODO: Semaphore style support, what if someone has 10k partitions and doesnt want
-        # 10k IO operations etc.
-
         Depending on `self.task_mode` messages are grouped into the following combinations and
         an async task per combination is spawned:
 
         """
-        # TODO: What should be injected into the handler func?
-        # TODO: Can we attach the context to the underlying Task as metadata?
-        # TODO: Typing is all wrong here, fix it all up
         task_generator = TaskModeRegistry.get(self.task_mode)
-        wrapped_tasks: list[WrappedTask] = task_generator.handle(messages)
+        wrapped_tasks: list[WrappedTask] = task_generator(
+            task_mode=self.task_mode,
+            hoppable=self.can_forward,
+            handler=self.handler_func,
+            retry_cfg=self.batch_retry_cfg,
+        ).handle(messages=messages)
         tasks = [t.task for t in wrapped_tasks]
-        task_map = {t.task: t.context for t in wrapped_tasks}
+        task_map: dict[asyncio.Task, KafkacContext] = {
+            t.task: t.context for t in wrapped_tasks
+        }
 
-        results: list[KafkacContext] = []
-        async for task in asyncio.as_completed(tasks):
-            # TODO: Unhandled exceptions? (Batch Wrapper?)
-            # TODO: Context being aware of next hops?
-            result = task_map[task]
-            ...
-        return results
+        results: list[TopicPartition] = []
+        for task in asyncio.as_completed(tasks):
+            try:
+                result = await task
+                wrapped_task: WrappedTask = task_map[task]
+                if wrapped_task.context.all_success:
+                    # Everything was successful, nothing transient to forward.
+                    break
+                if wrapped_task.context.has_forwards:
+                    await self.forwarder.forward_many(wrapped_task.context.poisoned)
 
-    async def _process_results(
-        self, results: list[KafkacContext]
-    ) -> tuple[list[TopicPartition], list[TopicPartition]]:
-        """_process_results parses the user results provided by upto N batched handler functions.  This
-        function is responsible for preventing user error and potential message loss.  It has a complex
-        decision tree for deriving what is actually committable."""
-        successful_partitions = []
-        blocked_partitions = []
-        poisoned_partitions = {}
-        for result in results:
-            if isinstance(result, BatchedWrappedUnhandledException):
-                # map the exception id back to the task above, we set the task
-                # name when fanning out to be the "(topic, partition)".
-                # TODO: Not working for now - how do we get the context back here?
-                ...
-            else:
-                # The BatchHandler will include the necessary information to dictate the
-                # remaining blocked or poisoned message(s).
-                # TODO: successful needs to be aware of blocked to not mark something > than
-                # lowest blocked (per partition as successful).
-                successful_partitions.extend(
+                # TODO: Handle cases where forwarding above did not success.
+                results.extend(
                     [
                         TopicPartition(
                             topic=msg.topic(),
                             partition=msg.partition(),
                             offset=msg.offset(),
                         )
-                        for msg in result._successes
+                        for msg in result.context.messages
                     ]
                 )
-                blocked_partitions.extend(
+
+            except BatchedWrappedUnhandledException as exc:
+                # TODO: User configuration? Dead letter the entire batch?
+                await self.forwarder.forward_many(exc.messages)
+                # TODO: Handle above cases when forwarding failed
+                results.extend(
                     [
                         TopicPartition(
                             topic=msg.topic(),
                             partition=msg.partition(),
                             offset=msg.offset(),
                         )
-                        for msg in result.blocked
+                        for msg in exc.messages
                     ]
                 )
 
-        # poisoned_partitions should be empty at this point (and merged into successful)
-        # unless they failed on the enqueueing mechanism, for now, this will cause an
-        # exit/crash, but not until we have committed the successful offsets up to that
-        # point.  This will be more 'user-configurable' in the future.
-        if poisoned_partitions:
-            # if the user has poisoned, but not configured a place for them to go, exit.
-            if self.retrier is None:
-                raise PoisonedMessagesWithNowhereToGoException(
-                    "poisoned messages with no retry/dlq configured"
-                )
-            else:
-                # attempt to 'enqueue' the messages to the retry queue
-                # if successful, they can be marked 'successful'
-                # if failing, how should we handle it?
-                # They can be blocked + re-seeked.
-                # They can cause an exit.
-                # They can be 'ignored' and continue on.
-                ...
-
-        # we need to calculate the minimum offset (per partition) that is marked as blocked, because
-        # successful_partitions cannot include any messages exceeding that, this is currently awkward
-        # tho because what if the client/caller has fanned out the full batch and still implemented
-        # blocking semantics - In that case they will reseek the partition, but could be in a scenario
-        # where they are getting mass duplicates for the batch while blocked, since messages after
-        # it will be retried too in the same batch size - This is probably a human error scenario in
-        # reality, but hard to fix in kafkac.
-
-        return successful_partitions, blocked_partitions
+        # At this point, all message(s) are successful
+        return results, []
 
     @staticmethod
     def _calculate_offsets(
